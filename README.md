@@ -20,22 +20,25 @@ If you reuse a variable in a normal programming language without explicitly trac
 
 ### Installation
 
-Clone the repository and you're ready to go!
+The compiler is available on PyPI. You can install it globally via `pip` or `uv`:
+```bash
+pip install uncertain
+# or
+uv tool install uncertain
+```
+
+If you want to install from source:
 ```bash
 git clone https://github.com/yourusername/uncertain.git
 cd uncertain
+pip install .
 ```
 
 ### Running Scripts
-We've included handy wrapper scripts that automatically manage dependencies using `uv`.
 
-Run an example calculation:
+Run an example calculation using the newly installed CLI:
 ```bash
-# Windows
-.\run.bat examples/my_experiment.calc
-
-# Linux/macOS
-uv run python -m uncertain.cli examples/my_experiment.calc
+uncertain examples/my_experiment.calc
 ```
 
 ---
@@ -85,6 +88,36 @@ error: math domain error
 ```
 
 > **Note:** For a comprehensive list of all diagnostics emitted by the compiler, check out the [Error Catalog](docs/error-catalog.md).
+
+---
+
+## Head-to-Head: `uncertain` vs. Python's `uncertainties`
+
+Python's popular `uncertainties` package is fantastic, but it operates entirely at *runtime* using linear approximations (the Delta method). 
+
+To see exactly why a compiler-enforced approach is safer and more precise, we've included a script that computes `a * a` where `a = 10.0 ± 2.0`.
+
+Run it yourself:
+```bash
+uv run python scripts/compare_uncertainties.py
+```
+
+**The Output:**
+```text
+1. Naive Hand Calculation (Assuming Independence):
+   Result: 100.00 ± 28.28
+   (DANGEROUS: Silently understates variance by ignoring correlation)
+
+2. Python's `uncertainties` package (a * a):
+   Result: 100.00 ± 40.00
+   (BETTER: Detects correlation, but uses linear Taylor approximation, dropping higher-order terms.)
+
+3. Uncertain DSL (forces `square(a)` at compile time):
+   Result: 100.00 ± 40.40
+   (PERFECT: Compiler caught the reuse, forced explicit intent, and used the exact higher-order formula.)
+```
+
+This single comparison proves the core thesis of the project: `uncertainties` will happily compute a linear approximation of `a * a` without telling you. `uncertain` will throw a **compile-time error**, forcing you to explicitly choose `square(a)`, which in turn applies the *exact* mathematical formula for the variance of a squared distribution.
 
 ---
 

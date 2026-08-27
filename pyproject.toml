@@ -1,11 +1,15 @@
 [project]
 name = "uncertain-lang"
-version = "0.1.2"
+version = "0.1.3"
 description = "A domain-specific language for safe, compile-time tracking of distributional uncertainty and correlations."
 readme = "README_pypi.md"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.2.3",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest>=8.3.4",
     "hypothesis>=6.126.0",
     "uncertainties>=3.1.7",

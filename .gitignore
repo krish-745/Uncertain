@@ -165,6 +165,3 @@ uv.lock
 # Design Documents
 uncertain-implementation-plan.md
 uncertainty-typed-language.md
-
-# PyPI README
-README_pypi.md

@@ -1,10 +1,10 @@
 import sys
 import argparse
-from uncertain_lang.parser import parse, ParseError
-from uncertain_lang.lexer import LexerError
-from uncertain_lang.typechecker import TypeContext, check_stmt
-from uncertain_lang.evaluator import evaluate
-from uncertain_lang.diagnostics import format_diagnostic
+from uncertain.parser import parse, ParseError
+from uncertain.lexer import LexerError
+from uncertain.typechecker import TypeContext, check_stmt
+from uncertain.evaluator import evaluate
+from uncertain.diagnostics import format_diagnostic
 
 def main():
     parser = argparse.ArgumentParser(description="Uncertain Lang CLI")

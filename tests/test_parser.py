@@ -1,7 +1,7 @@
 import pytest
-from uncertain_lang.lexer import tokenize, Token
-from uncertain_lang.parser import parse, ParseError
-from uncertain_lang.ast_nodes import *
+from uncertain.lexer import tokenize, Token
+from uncertain.parser import parse, ParseError
+from uncertain.ast_nodes import *
 
 def test_lexer():
     source = "let a: Measured<Normal(10.0, 2.0)> = sensor_read();"

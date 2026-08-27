@@ -1,12 +1,13 @@
 import math
 from dataclasses import dataclass
 from typing import Tuple, List, Optional
-from uncertain_lang.ast_nodes import *
-from uncertain_lang.distributions import (
-    Dist, add, sub, mul_independent, div_independent, square, sqrt_dist, correlated_product
+from uncertain.ast_nodes import *
+from uncertain.distributions import (
+    Dist, add, sub, mul_independent, div_independent, square, sqrt_dist, correlated_product,
+    MathDomainError
 )
-from uncertain_lang.diagnostics import Diagnostic
-from uncertain_lang.dependency import check_reuse, DepSet
+from uncertain.diagnostics import Diagnostic
+from uncertain.dependency import check_reuse, DepSet
 
 @dataclass(frozen=True)
 class MeasuredType:
@@ -71,7 +72,12 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
                 diags.append(diag)
                 return ERROR_TYPE, diags
             fn = mul_independent if expr.op == "*" else div_independent
-            return MeasuredType(fn(lt.dist, rt.dist), lt.deps | rt.deps), diags
+            try:
+                res = fn(lt.dist, rt.dist)
+            except MathDomainError as e:
+                diags.append(Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)}))
+                return ERROR_TYPE, diags
+            return MeasuredType(res, lt.deps | rt.deps), diags
             
     elif isinstance(expr, Call):
         if expr.name == "square" and len(expr.args) == 1:
@@ -80,7 +86,11 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
             
         elif expr.name == "sqrt" and len(expr.args) == 1:
             at, ad = synth(expr.args[0], ctx)
-            return MeasuredType(sqrt_dist(at.dist), at.deps), ad
+            try:
+                res = sqrt_dist(at.dist)
+            except MathDomainError as e:
+                return ERROR_TYPE, ad + [Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)})]
+            return MeasuredType(res, at.deps), ad
             
         elif expr.name == "correlated" and len(expr.args) >= 2:
             at, ad = synth(expr.args[0], ctx)

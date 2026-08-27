@@ -1,7 +1,7 @@
 import pytest
-from uncertain_lang.parser import parse
-from uncertain_lang.typechecker import check_stmt, TypeContext
-from uncertain_lang.evaluator import evaluate
+from uncertain.parser import parse
+from uncertain.typechecker import check_stmt, TypeContext
+from uncertain.evaluator import evaluate
 
 def test_evaluator():
     source = """

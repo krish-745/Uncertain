@@ -1,8 +1,8 @@
 import os
 import pytest
-from uncertain_lang.parser import parse
-from uncertain_lang.typechecker import check_stmt, TypeContext
-from uncertain_lang.diagnostics import format_diagnostic
+from uncertain.parser import parse
+from uncertain.typechecker import check_stmt, TypeContext
+from uncertain.diagnostics import format_diagnostic
 
 def test_golden_reuse_error():
     base_dir = os.path.dirname(__file__)

@@ -1,5 +1,5 @@
-from uncertain_lang.ast_nodes import *
-from uncertain_lang.diagnostics import Diagnostic
+from uncertain.ast_nodes import *
+from uncertain.diagnostics import Diagnostic
 
 DepSet = frozenset[str]
 

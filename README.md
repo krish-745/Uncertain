@@ -35,7 +35,7 @@ Run an example calculation:
 .\run.bat examples/my_experiment.calc
 
 # Linux/macOS
-uv run python -m uncertain_lang.cli examples/my_experiment.calc
+uv run python -m uncertain.cli examples/my_experiment.calc
 ```
 
 ---
@@ -64,6 +64,27 @@ error: uncertain reuse without correlation annotation
      or wrap with `correlated(..., ..., cov = ...)` if you have an explicit
      covariance estimate.
 ```
+
+### Catching Runtime Math Errors at Compile Time
+Beyond type checking, `uncertain` uses the same beautiful diagnostic system to catch mathematical domain errors before your program even evaluates. For example, taking the square root of a distribution with a negative mean:
+
+```calc
+let a = sensor_read() - 15.0;
+let b = sqrt(a);
+```
+
+Yields a pinpointed math-domain error:
+```text
+error: math domain error
+  --> line 2:9
+   |
+ 2 | let b = sqrt(a);
+   |         ^^^^^^^ invalid operation
+   |
+   = note: cannot compute the square root of a distribution with a negative mean (-5.0)
+```
+
+> **Note:** For a comprehensive list of all diagnostics emitted by the compiler, check out the [Error Catalog](docs/error-catalog.md).
 
 ---
 
@@ -108,7 +129,10 @@ let correlated_area = correlated(w, h, cov=0.5);
 
 ## Testing
 
-The project has a robust test suite covering lexical analysis, recursive-descent parsing, bidirectional type checking, and hypothesis-driven property tests for the distribution math.
+The project has a highly robust, fuzzed test suite covering lexical analysis, recursive-descent parsing, bidirectional type checking, and hypothesis-driven property tests for the distribution math.
+
+- **Fuzzing**: The parser and typechecker are subjected to thousands of randomly generated inputs and deep AST structures via `hypothesis` to ensure zero unhandled exceptions.
+- **Performance**: The typechecker dependency-union performance is strictly validated against large generated programs.
 
 To run the full test suite:
 ```bash

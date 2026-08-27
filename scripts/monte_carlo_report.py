@@ -5,7 +5,7 @@ import os
 # Add the src directory to path to allow running as a script
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from uncertain_lang.distributions import (
+from uncertain.distributions import (
     Dist, add, sub, mul_independent, div_independent, square, sqrt_dist, correlated_product
 )
 

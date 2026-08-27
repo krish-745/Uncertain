@@ -1,6 +1,6 @@
-from uncertain_lang.ast_nodes import LetStmt
-from uncertain_lang.distributions import Dist
-from uncertain_lang.typechecker import TypeContext
+from uncertain.ast_nodes import LetStmt
+from uncertain.distributions import Dist
+from uncertain.typechecker import TypeContext
 
 def evaluate(typed_program: list[LetStmt], ctx: TypeContext) -> dict[str, Dist]:
     env: dict[str, Dist] = {}

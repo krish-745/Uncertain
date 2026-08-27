@@ -1,7 +1,7 @@
 import pytest
 import math
-from uncertain_lang.parser import parse
-from uncertain_lang.typechecker import check_stmt, TypeContext
+from uncertain.parser import parse
+from uncertain.typechecker import check_stmt, TypeContext
 
 def test_typecheck_mul():
     source = """

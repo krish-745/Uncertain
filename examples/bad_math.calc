@@ -1,0 +1,2 @@
+let a = sensor_read() - 15.0;
+let b = sqrt(a);

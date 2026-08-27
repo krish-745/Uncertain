@@ -1,6 +1,6 @@
 import pytest
-from uncertain_lang.parser import parse
-from uncertain_lang.typechecker import check_stmt, TypeContext, synth
+from uncertain.parser import parse
+from uncertain.typechecker import check_stmt, TypeContext, synth
 
 def test_typecheck_sum():
     source = """

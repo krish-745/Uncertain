@@ -1,5 +1,5 @@
 [project]
-name = "uncertain_lang"
+name = "uncertain"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-uncertain = "uncertain_lang.cli:main"
+uncertain = "uncertain.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.6,<0.13.0"]

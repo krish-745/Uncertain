@@ -1,6 +1,9 @@
 import math
 from dataclasses import dataclass
 
+class MathDomainError(Exception):
+    pass
+
 @dataclass(frozen=True)
 class Dist:
     mean: float
@@ -19,6 +22,8 @@ def mul_independent(a: Dist, b: Dist) -> Dist:
     return Dist(mean, abs(mean) * rel)
 
 def div_independent(a: Dist, b: Dist) -> Dist:
+    if b.mean == 0:
+        raise MathDomainError("cannot divide by a distribution with a zero mean")
     mean = a.mean / b.mean
     rel = math.sqrt((a.stddev / a.mean) ** 2 + (b.stddev / b.mean) ** 2) if a.mean and b.mean else 0.0
     return Dist(mean, abs(mean) * rel)
@@ -30,6 +35,8 @@ def square(a: Dist) -> Dist:
     return Dist(mean, math.sqrt(variance))
 
 def sqrt_dist(a: Dist) -> Dist:
+    if a.mean < 0:
+        raise MathDomainError(f"cannot compute the square root of a distribution with a negative mean ({a.mean})")
     # delta method: stddev' = stddev / (2*sqrt(mean))
     mean = math.sqrt(a.mean)
     stddev = a.stddev / (2 * math.sqrt(a.mean)) if a.mean > 0 else 0.0

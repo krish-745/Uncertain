@@ -1,6 +1,6 @@
 from typing import List, Iterator, Optional
-from uncertain_lang.lexer import Token, tokenize, LexerError
-from uncertain_lang.ast_nodes import *
+from uncertain.lexer import Token, tokenize, LexerError
+from uncertain.ast_nodes import *
 
 class ParseError(Exception):
     def __init__(self, message: str, line: int, col: int):

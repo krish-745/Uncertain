@@ -11,4 +11,4 @@ if %errorlevel% neq 0 (
 )
 
 set PYTHONPATH=src
-%UV_CMD% run python -m uncertain_lang.cli %*
+%UV_CMD% run python -m uncertain.cli %*

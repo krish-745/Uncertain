@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from uncertain_lang.ast_nodes import Span
+from uncertain.ast_nodes import Span
 
 @dataclass
 class Diagnostic:
@@ -31,6 +31,11 @@ def format_diagnostic(diag: Diagnostic, source_lines: list[str]) -> str:
         title = "type annotation mismatch"
         caret_msg = "inferred type does not match annotation"
         note = "the distribution computed by the typechecker differs from the explicit type annotation."
+        help_msg = ""
+    elif diag.kind == "math-domain-error":
+        title = "math domain error"
+        caret_msg = "invalid operation"
+        note = diag.extra.get("msg", "mathematical operation is undefined")
         help_msg = ""
     else:
         title = diag.kind

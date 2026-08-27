@@ -1,8 +1,9 @@
 import math
 import pytest
 from hypothesis import given, strategies as st
-from uncertain_lang.distributions import (
-    Dist, add, sub, mul_independent, div_independent, square, sqrt_dist, correlated_product
+from uncertain.distributions import (
+    Dist, add, sub, mul_independent, div_independent, square, sqrt_dist, correlated_product,
+    MathDomainError
 )
 
 st_mean = st.floats(min_value=-100.0, max_value=100.0, allow_nan=False, allow_infinity=False)
@@ -55,3 +56,14 @@ def test_sqrt_properties(m, s):
     d = Dist(m, s)
     res = sqrt_dist(d)
     assert math.isclose(res.mean, math.sqrt(m), rel_tol=1e-5, abs_tol=1e-8)
+
+def test_edge_cases():
+    with pytest.raises(MathDomainError, match="cannot compute the square root of a distribution with a negative mean"):
+        sqrt_dist(Dist(-1.0, 1.0))
+        
+    with pytest.raises(MathDomainError, match="cannot divide by a distribution with a zero mean"):
+        div_independent(Dist(5.0, 1.0), Dist(0.0, 1.0))
+        
+    # Division by an exact zero should also fail
+    with pytest.raises(MathDomainError):
+        div_independent(Dist(5.0, 1.0), Dist(0.0, 0.0))

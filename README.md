@@ -1,6 +1,27 @@
-# Uncertain
+<p align="center">
+  <img src="https://img.shields.io/badge/Python_3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/uv-F800D7?style=for-the-badge&logo=python&logoColor=white" alt="uv" />
+  <img src="https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white" alt="Pytest" />
+  <img src="https://img.shields.io/badge/Hypothesis-6B5B95?style=for-the-badge&logo=python&logoColor=white" alt="Hypothesis" />
+  <img src="https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white" alt="NumPy" />
+</p>
 
-*A statically-typed arithmetic DSL where every value's type encodes its distributional uncertainty — and the compiler proves how that uncertainty compounds.*
+# Uncertain — The Uncertainty-Aware Programming Language
+
+> **A statically-typed arithmetic DSL where every value's type encodes its distributional uncertainty — and the compiler proves how that uncertainty compounds.**
+
+---
+
+## Table of Contents
+
+- [Why Uncertain?](#why-uncertain)
+- [Quick Start](#quick-start)
+- [The Hero Demo](#the-hero-demo)
+- [Head-to-Head](#head-to-head)
+- [Language Guide](#language-guide)
+- [Testing](#testing)
+
+---
 
 ## Why Uncertain?
 
@@ -22,15 +43,15 @@ If you reuse a variable in a normal programming language without explicitly trac
 
 The compiler is available on PyPI. You can install it globally via `pip` or `uv`:
 ```bash
-pip install uncertain
+pip install uncertain-lang
 # or
-uv tool install uncertain
+uv tool install uncertain-lang
 ```
 
 If you want to install from source:
 ```bash
-git clone https://github.com/yourusername/uncertain.git
-cd uncertain
+git clone https://github.com/krish-745/Uncertain.git
+cd Uncertain
 pip install .
 ```
 
@@ -43,8 +64,9 @@ uncertain examples/my_experiment.calc
 
 ---
 
-## The Hero Demo: Catching Correlation Bugs
+## The Hero Demo
 
+### Catching Correlation Bugs
 Consider this simple program:
 
 ```calc
@@ -91,7 +113,9 @@ error: math domain error
 
 ---
 
-## Head-to-Head: `uncertain` vs. Python's `uncertainties`
+## Head-to-Head
+
+### `uncertain` vs. Python's `uncertainties`
 
 Python's popular `uncertainties` package is fantastic, but it operates entirely at *runtime* using linear approximations (the Delta method). 
 
@@ -180,3 +204,7 @@ To run the Monte Carlo simulation cross-validation (which proves our analytic De
 ```bash
 uv run python scripts/monte_carlo_report.py
 ```
+
+<p align="center">
+  <b>Built with ❤️ to keep data precise</b>
+</p>

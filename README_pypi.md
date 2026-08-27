@@ -1,6 +1,6 @@
 # Uncertain — The Uncertainty-Aware Programming Language
 
-[![Python](https://img.shields.io/badge/Python_3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)](#) [![uv](https://img.shields.io/badge/uv-F800D7?style=for-the-badge&logo=python&logoColor=white)](#) [![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)](#) [![Hypothesis](https://img.shields.io/badge/Hypothesis-6B5B95?style=for-the-badge&logo=python&logoColor=white)](#) [![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white)](#)
+[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](#) [![uv](https://img.shields.io/badge/uv-F800D7?style=for-the-badge&logo=python&logoColor=white)](#) [![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)](#) [![Hypothesis](https://img.shields.io/badge/Hypothesis-6B5B95?style=for-the-badge&logo=python&logoColor=white)](#) [![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white)](#)
 
 > **A statically-typed arithmetic DSL where every value's type encodes its distributional uncertainty — and the compiler proves how that uncertainty compounds.**
 
@@ -31,7 +31,7 @@ If you reuse a variable in a normal programming language without explicitly trac
 
 ### Prerequisites
 - [uv](https://astral.sh/uv/) (Fast Python package and environment manager)
-- Python 3.12+
+- Python 3.10+
 
 ### Installation
 

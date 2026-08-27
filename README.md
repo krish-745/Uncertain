@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Python_3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/uv-F800D7?style=for-the-badge&logo=python&logoColor=white" alt="uv" />
   <img src="https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white" alt="Pytest" />
   <img src="https://img.shields.io/badge/Hypothesis-6B5B95?style=for-the-badge&logo=python&logoColor=white" alt="Hypothesis" />
@@ -37,7 +37,7 @@ If you reuse a variable in a normal programming language without explicitly trac
 
 ### Prerequisites
 - [uv](https://astral.sh/uv/) (Fast Python package and environment manager)
-- Python 3.12+
+- Python 3.10+
 
 ### Installation
 

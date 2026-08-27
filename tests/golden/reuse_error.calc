@@ -1,0 +1,2 @@
+let a = sensor_read();
+let variance_est = a * a;

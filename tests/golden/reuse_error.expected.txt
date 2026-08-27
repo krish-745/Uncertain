@@ -1,0 +1,11 @@
+error: uncertain reuse without correlation annotation
+  --> line 2:20
+   |
+ 2 | let variance_est = a * a;
+   |                    ^^^^^ `a` appears twice in this product
+   |
+   = note: treating repeated occurrences of `a` as independent understates
+     the true variance of the result.
+   = help: use `square(a)` for the correct self-product variance formula,
+     or wrap with `correlated(..., ..., cov = ...)` if you have an explicit
+     covariance estimate.

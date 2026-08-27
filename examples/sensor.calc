@@ -1,0 +1,12 @@
+let x: Measured<Normal(10.0, 1.0)> = sensor_read();
+let y = sensor_read();
+
+let sum = x + y;
+let diff = x - y;
+let product = x * y;
+let ratio = x / y;
+let sq = square(x);
+let root = sqrt(x);
+
+// Explicit covariance estimate
+let corr = correlated(x, x, cov=1.0);

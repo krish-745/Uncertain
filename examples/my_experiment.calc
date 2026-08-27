@@ -1,0 +1,25 @@
+// my_experiment.calc
+
+// Let's say we have three sensors reading some physical properties
+let width = sensor_read();
+let length = sensor_read();
+let height = sensor_read();
+
+// We can safely calculate the perimeter and area since width and length are independent
+let perimeter = width + width + length + length;
+let area = width * length;
+
+// We can also calculate volume
+let volume = area * height;
+
+// Let's say we want the square of the height. 
+// Using `height * height` will throw a compiler error because we're reusing the same variable!
+// Instead, we use the mathematically safe `square()` function:
+let height_squared = square(height);
+
+// And we can take the square root of a measurement
+let root_width = sqrt(width);
+
+// If we know two measurements are correlated (e.g. from the same faulty batch of sensors),
+// we can safely multiply them by explicitly providing the covariance:
+let correlated_area = correlated(width, length, cov=0.5);

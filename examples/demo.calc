@@ -1,0 +1,31 @@
+// 1. Core Sensors (Normal, Uniform, Empirical)
+var uniform_sensor: Measured<Uniform(0, 10)> = uniform_read();
+var normal_sensor = sensor_read(); // Implicit Normal(10, 1)
+var custom_sensor: Measured<Empirical([1, 5, 9])> = empirical_read([1, 5, 9]);
+
+// 2. Continuous Distributions
+var price_sensor: Measured<LogNormal(1, 0.5)> = lognormal_read(1, 0.5);
+var failure_time: Measured<Exponential(0.1)> = exponential_read(0.1);
+var wear_rate: Measured<Gamma(2, 2.5)> = gamma_read(2, 2.5);
+
+// 3. Discrete Distributions
+var click_rate: Measured<Poisson(5)> = poisson_read(5);
+var success_rate: Measured<Binomial(100, 0.9)> = binomial_read(100, 0.9);
+var event_flag: Measured<Bernoulli(0.5)> = bernoulli_read(0.5);
+var failures_until_success: Measured<Geometric(0.2)> = geometric_read(0.2);
+var clicks_until_stop: Measured<NegativeBinomial(5, 0.5)> = negbinom_read(5, 0.5);
+
+// 4. Arrays (ArrayLit)
+let continuous_sensors = [uniform_sensor, normal_sensor, custom_sensor, price_sensor, failure_time, wear_rate];
+let discrete_sensors = [click_rate, success_rate, event_flag, failures_until_success, clicks_until_stop];
+
+// 5. Mutability, Scope & Loops
+var sum = 0;
+var iter = 0;
+
+while (iter < 3) {
+    // 6. Moment-Matching Warning (Mixed Distributions)
+    // This will trigger an `approximation-warning` because we are adding Normal + Empirical + Poisson
+    sum = sum + normal_sensor + custom_sensor + click_rate;
+    iter = iter + 1;
+}

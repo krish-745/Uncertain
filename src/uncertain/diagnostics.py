@@ -7,6 +7,7 @@ class Diagnostic:
     span: Span
     overlapping_vars: frozenset[str] | None = None
     extra: dict = field(default_factory=dict)
+    severity: str = "error"
 
 def format_diagnostic(diag: Diagnostic, source_lines: list[str]) -> str:
     line_idx = diag.span.line - 1
@@ -37,13 +38,18 @@ def format_diagnostic(diag: Diagnostic, source_lines: list[str]) -> str:
         caret_msg = "invalid operation"
         note = diag.extra.get("msg", "mathematical operation is undefined")
         help_msg = ""
+    elif diag.kind == "approximation-warning":
+        title = "approximation-warning"
+        caret_msg = "warning here"
+        note = diag.extra.get("msg", "")
+        help_msg = ""
     else:
         title = diag.kind
         caret_msg = "error here"
         note = ""
         help_msg = ""
         
-    res = f"error: {title}\n"
+    res = f"{diag.severity}: {title}\n"
     res += f"  --> line {diag.span.line}:{diag.span.col}\n"
     res += f"   |\n"
     res += f"{diag.span.line:2d} | {line_text}\n"

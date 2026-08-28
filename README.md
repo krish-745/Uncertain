@@ -147,15 +147,36 @@ This single comparison proves the core thesis of the project: `uncertainties` wi
 
 ## Language Guide
 
-### Declaring Variables
-All inputs are declared using the built-in `sensor_read()` function. The compiler infers the uncertainty, but you can also provide explicit type annotations to ensure your expectations match reality.
+### 11 Statistical Distributions
+`Uncertain` features a massive built-in statistical suite. You can type-annotate variables with exactly the distribution that models your data. The typechecker automatically calculates their mathematical mean and variance to ensure strict typing.
 
 ```calc
-// Inferred type
-let width = sensor_read(); 
+// Continuous
+let normal: Measured<Normal(10.0, 1.0)> = sensor_read();
+let price: Measured<LogNormal(1, 0.5)> = lognormal_read(1, 0.5);
+let wear: Measured<Gamma(2, 2.5)> = gamma_read(2, 2.5);
+let uniform: Measured<Uniform(0, 10)> = uniform_read();
+let failure: Measured<Exponential(0.1)> = exponential_read(0.1);
 
-// Explicitly type-checked distribution
-let length: Measured<Normal(10.0, 1.0)> = sensor_read();
+// Discrete & Empirical
+let clicks: Measured<Poisson(5)> = poisson_read(5);
+let custom: Measured<Empirical([1, 5, 9])> = empirical_read([1, 5, 9]);
+let success: Measured<Binomial(100, 0.9)> = binomial_read(100, 0.9);
+// Also: Bernoulli, Geometric, NegativeBinomial, Exact
+```
+
+### Arrays & Mutability
+The language supports block scoping, mutable variables (`var`), assignment, arrays (`[...]`), and `while` loops. The compiler seamlessly tracks dependency lineages across block reassignments!
+
+```calc
+let sensors = [normal, price, wear];
+var sum = 0;
+var iter = 0;
+
+while (iter < 3) {
+    sum = sum + normal; // Typechecker safely tracks dependencies across loop iterations
+    iter = iter + 1;
+}
 ```
 
 ### Math & Operations
@@ -170,6 +191,8 @@ let area = w * h;
 let ratio = w / h;
 let root = sqrt(w);
 ```
+
+> **Note on Approximation:** If you combine different distribution families (e.g., adding `Normal` + `Poisson`), the compiler falls back to a Normal approximation using moment-matching and explicitly emits an `approximation-warning` to ensure you are aware of the precision trade-off.
 
 ### Safe Variable Reuse
 If you *must* multiply correlated variables, you must use mathematically safe functions provided by the language to bypass the compiler error:

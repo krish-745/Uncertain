@@ -39,10 +39,15 @@ class Parser:
                 raise ParseError(msg + " (unexpected EOF)", -1, -1)
         return tok
 
-    def parse_program(self) -> tuple[List[LetStmt], Optional[Expr]]:
+    def parse_program(self) -> tuple[List[Stmt], Optional[Expr]]:
         stmts = []
-        while self.current() and self.current().type == "LET":
-            stmts.append(self.parse_let_stmt())
+        while self.current():
+            if self.current().type in ("LET", "VAR", "WHILE"):
+                stmts.append(self.parse_statement())
+            elif self.current().type == "IDENT" and self.pos + 1 < len(self.tokens) and self.tokens[self.pos+1].type == "EQUALS":
+                stmts.append(self.parse_statement())
+            else:
+                break
         
         expr = None
         if self.current():
@@ -52,6 +57,18 @@ class Parser:
             raise ParseError("Unexpected tokens at end of program", self.current().line, self.current().col)
             
         return stmts, expr
+
+    def parse_statement(self) -> Stmt:
+        tok = self.current()
+        if tok.type == "LET":
+            return self.parse_let_stmt()
+        elif tok.type == "VAR":
+            return self.parse_var_stmt()
+        elif tok.type == "WHILE":
+            return self.parse_while_stmt()
+        elif tok.type == "IDENT":
+            return self.parse_assign_stmt()
+        raise ParseError("Expected statement", tok.line, tok.col)
 
     def parse_let_stmt(self) -> LetStmt:
         start_tok = self.expect("LET", "Expected 'let'")
@@ -70,6 +87,53 @@ class Parser:
         span = Span(start_tok.line, start_tok.col, length)
         return LetStmt(ident.value, type_ann, value, span)
 
+    def parse_var_stmt(self) -> VarStmt:
+        start_tok = self.expect("VAR", "Expected 'var'")
+        ident = self.expect("IDENT", "Expected identifier after 'var'")
+        
+        type_ann = None
+        if self.match("COLON"):
+            type_ann = self.parse_type_ann()
+            
+        self.expect("EQUALS", "Expected '=' in var statement")
+        
+        value = self.parse_expression()
+        self.expect("SEMI", "Expected ';' after var statement")
+        
+        length = (value.span.col + value.span.length) - start_tok.col
+        span = Span(start_tok.line, start_tok.col, length)
+        return VarStmt(ident.value, type_ann, value, span)
+
+    def parse_assign_stmt(self) -> AssignStmt:
+        ident_tok = self.expect("IDENT", "Expected identifier")
+        self.expect("EQUALS", "Expected '=' in assignment")
+        value = self.parse_expression()
+        self.expect("SEMI", "Expected ';' after assignment")
+        
+        length = (value.span.col + value.span.length) - ident_tok.col
+        span = Span(ident_tok.line, ident_tok.col, length)
+        return AssignStmt(ident_tok.value, value, span)
+
+    def parse_while_stmt(self) -> WhileStmt:
+        start_tok = self.expect("WHILE", "Expected 'while'")
+        self.expect("LPAREN", "Expected '(' after while")
+        condition = self.parse_expression()
+        self.expect("RPAREN", "Expected ')' after condition")
+        
+        body = self.parse_block()
+        length = (body.span.col + body.span.length) - start_tok.col
+        span = Span(start_tok.line, start_tok.col, length)
+        return WhileStmt(condition, body, span)
+
+    def parse_block(self) -> Block:
+        start_tok = self.expect("LBRACE", "Expected '{'")
+        stmts = []
+        while self.current() and self.current().type != "RBRACE":
+            stmts.append(self.parse_statement())
+        end_tok = self.expect("RBRACE", "Expected '}'")
+        length = (end_tok.col + len(end_tok.value)) - start_tok.col
+        return Block(stmts, Span(start_tok.line, start_tok.col, length))
+
     def parse_type_ann(self) -> DistLit:
         self.expect("MEASURED", "Expected 'Measured'")
         self.expect("LANGLE", "Expected '<'")
@@ -86,20 +150,100 @@ class Parser:
             stddev = self.parse_expression()
             self.expect("RPAREN", "Expected ')'")
             dist = NormalLit(mean, stddev)
+        elif tok.type == "UNIFORM":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            min_val = self.parse_expression()
+            self.expect("COMMA", "Expected ','")
+            max_val = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = UniformLit(min_val, max_val)
         elif tok.type == "EXACT":
             self.advance()
             self.expect("LPAREN", "Expected '('")
             val = self.parse_expression()
             self.expect("RPAREN", "Expected ')'")
             dist = ExactLit(val)
+        elif tok.type == "EMPIRICAL":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            val = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = EmpiricalLit(val)
+        elif tok.type == "LOGNORMAL":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            mean = self.parse_expression()
+            self.expect("COMMA", "Expected ','")
+            stddev = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = LogNormalLit(mean, stddev)
+        elif tok.type == "POISSON":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            lam = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = PoissonLit(lam)
+        elif tok.type == "BINOMIAL":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            n = self.parse_expression()
+            self.expect("COMMA", "Expected ','")
+            p = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = BinomialLit(n, p)
+        elif tok.type == "GAMMA":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            k = self.parse_expression()
+            self.expect("COMMA", "Expected ','")
+            theta = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = GammaLit(k, theta)
+        elif tok.type == "BERNOULLI":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            p = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = BernoulliLit(p)
+        elif tok.type == "NEGATIVE_BINOMIAL":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            r = self.parse_expression()
+            self.expect("COMMA", "Expected ','")
+            p = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = NegativeBinomialLit(r, p)
+        elif tok.type == "GEOMETRIC":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            p = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = GeometricLit(p)
+        elif tok.type == "EXPONENTIAL":
+            self.advance()
+            self.expect("LPAREN", "Expected '('")
+            lam = self.parse_expression()
+            self.expect("RPAREN", "Expected ')'")
+            dist = ExponentialLit(lam)
         else:
-            raise ParseError("Expected 'Normal' or 'Exact'", tok.line, tok.col)
+            raise ParseError("Expected a distribution type", tok.line, tok.col)
             
         self.expect("RANGLE", "Expected '>'")
         return dist
 
     def parse_expression(self) -> Expr:
-        return self.parse_term()
+        return self.parse_comparison()
+
+    def parse_comparison(self) -> Expr:
+        left = self.parse_term()
+        op_tok = self.match("LANGLE") or self.match("RANGLE")
+        if op_tok:
+            right = self.parse_term()
+            length = (right.span.col + right.span.length) - left.span.col
+            span = Span(left.span.line, left.span.col, length)
+            left = BinOp(op_tok.value, left, right, span)
+        return left
 
     def parse_term(self) -> Expr:
         left = self.parse_factor()
@@ -185,9 +329,23 @@ class Parser:
             self.expect("RPAREN", "Expected ')'")
             return expr
             
+        if tok.type == "LBRACKET":
+            self.advance()
+            elements = []
+            if not self.match("RBRACKET"):
+                while True:
+                    elements.append(self.parse_expression())
+                    if not self.match("COMMA"):
+                        break
+                end_tok = self.expect("RBRACKET", "Expected ']'")
+            else:
+                end_tok = self.tokens[self.pos-1]
+            length = (end_tok.col + len(end_tok.value)) - tok.col
+            return ArrayLit(elements, Span(tok.line, tok.col, length))
+            
         raise ParseError(f"Unexpected token {tok.value!r}", tok.line, tok.col)
 
-def parse(source: str) -> tuple[List[LetStmt], Optional[Expr]]:
+def parse(source: str) -> tuple[List[Stmt], Optional[Expr]]:
     tokens = tokenize(source)
     parser = Parser(tokens)
     return parser.parse_program()

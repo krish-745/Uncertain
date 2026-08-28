@@ -38,7 +38,8 @@ def main():
         for diag in all_diags:
             print(format_diagnostic(diag, source_lines))
             print("")
-        sys.exit(1)
+        if any(diag.severity == "error" for diag in all_diags):
+            sys.exit(1)
         
     if args.check_only:
         print("Typecheck passed.")

@@ -8,6 +8,7 @@ class MathDomainError(Exception):
 class Dist:
     mean: float
     stddev: float   # 0.0 represents Exact(value)
+    family: str = "Normal" # "Normal", "Uniform", "Exact"
 
 def add(a: Dist, b: Dist) -> Dist:
     return Dist(a.mean + b.mean, math.sqrt(a.stddev**2 + b.stddev**2))

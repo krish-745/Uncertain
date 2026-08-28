@@ -1,11 +1,12 @@
-from uncertain.ast_nodes import LetStmt
+from uncertain.ast_nodes import Stmt, LetStmt, VarStmt, AssignStmt
 from uncertain.distributions import Dist
 from uncertain.typechecker import TypeContext
 
-def evaluate(typed_program: list[LetStmt], ctx: TypeContext) -> dict[str, Dist]:
+def evaluate(typed_program: list[Stmt], ctx: TypeContext) -> dict[str, Dist]:
     env: dict[str, Dist] = {}
     for stmt in typed_program:
-        typ = ctx.lookup(stmt.name)
-        if typ:
-            env[stmt.name] = typ.dist
+        if hasattr(stmt, 'name'):
+            typ = ctx.lookup(stmt.name)
+            if typ:
+                env[stmt.name] = typ.dist
     return env

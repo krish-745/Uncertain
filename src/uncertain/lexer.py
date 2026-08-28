@@ -27,7 +27,19 @@ EQUALS = "EQUALS"
 SEMI = "SEMI"
 MEASURED = "MEASURED"
 NORMAL = "NORMAL"
+UNIFORM = "UNIFORM"
+EMPIRICAL = "EMPIRICAL"
+LOGNORMAL = "LOGNORMAL"
+POISSON = "POISSON"
+BINOMIAL = "BINOMIAL"
+GAMMA = "GAMMA"
+BERNOULLI = "BERNOULLI"
+NEGATIVE_BINOMIAL = "NEGATIVE_BINOMIAL"
+GEOMETRIC = "GEOMETRIC"
+EXPONENTIAL = "EXPONENTIAL"
 EXACT = "EXACT"
+VAR = "VAR"
+WHILE = "WHILE"
 
 class LexerError(Exception):
     def __init__(self, message: str, line: int, col: int):
@@ -46,6 +58,10 @@ def tokenize(source: str) -> Iterator[Token]:
         ('SLASH',    r'/'),
         ('LPAREN',   r'\('),
         ('RPAREN',   r'\)'),
+        ('LBRACE',   r'\{'),
+        ('RBRACE',   r'\}'),
+        ('LBRACKET', r'\['),
+        ('RBRACKET', r'\]'),
         ('LANGLE',   r'<'),
         ('RANGLE',   r'>'),
         ('COMMA',    r','),
@@ -68,15 +84,39 @@ def tokenize(source: str) -> Iterator[Token]:
         elif kind == 'IDENT':
             if value == 'let':
                 yield Token(LET, value, line_num, column)
+            elif value == 'var':
+                yield Token(VAR, value, line_num, column)
+            elif value == 'while':
+                yield Token(WHILE, value, line_num, column)
             elif value == 'Measured':
                 yield Token(MEASURED, value, line_num, column)
             elif value == 'Normal':
                 yield Token(NORMAL, value, line_num, column)
+            elif value == 'Uniform':
+                yield Token(UNIFORM, value, line_num, column)
+            elif value == 'Empirical':
+                yield Token("EMPIRICAL", value, line_num, column)
+            elif value == 'LogNormal':
+                yield Token("LOGNORMAL", value, line_num, column)
+            elif value == 'Poisson':
+                yield Token("POISSON", value, line_num, column)
+            elif value == 'Binomial':
+                yield Token("BINOMIAL", value, line_num, column)
+            elif value == 'Gamma':
+                yield Token("GAMMA", value, line_num, column)
+            elif value == 'Bernoulli':
+                yield Token("BERNOULLI", value, line_num, column)
+            elif value == 'NegativeBinomial':
+                yield Token("NEGATIVE_BINOMIAL", value, line_num, column)
+            elif value == 'Geometric':
+                yield Token("GEOMETRIC", value, line_num, column)
+            elif value == 'Exponential':
+                yield Token("EXPONENTIAL", value, line_num, column)
             elif value == 'Exact':
                 yield Token(EXACT, value, line_num, column)
             else:
                 yield Token(IDENT, value, line_num, column)
-        elif kind in ('PLUS', 'MINUS', 'STAR', 'SLASH', 'LPAREN', 'RPAREN', 'LANGLE', 'RANGLE', 'COMMA', 'COLON', 'EQUALS', 'SEMI'):
+        elif kind in ('PLUS', 'MINUS', 'STAR', 'SLASH', 'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET', 'LANGLE', 'RANGLE', 'COMMA', 'COLON', 'EQUALS', 'SEMI'):
             yield Token(kind, value, line_num, column)
         elif kind == 'NEWLINE':
             line_start = mo.end()

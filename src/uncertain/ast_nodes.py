@@ -37,10 +37,55 @@ class NormalLit:
     stddev: "Expr"
 
 @dataclass
+class UniformLit:
+    min_val: "Expr"
+    max_val: "Expr"
+
+@dataclass
 class ExactLit:
     value: "Expr"
 
-DistLit = Union[NormalLit, ExactLit]
+@dataclass
+class EmpiricalLit:
+    data: "Expr"
+
+@dataclass
+class LogNormalLit:
+    mean: "Expr"
+    stddev: "Expr"
+
+@dataclass
+class PoissonLit:
+    lam: "Expr"
+
+@dataclass
+class BinomialLit:
+    n: "Expr"
+    p: "Expr"
+
+@dataclass
+class GammaLit:
+    k: "Expr"
+    theta: "Expr"
+
+@dataclass
+class BernoulliLit:
+    p: "Expr"
+
+@dataclass
+class NegativeBinomialLit:
+    r: "Expr"
+    p: "Expr"
+
+@dataclass
+class GeometricLit:
+    p: "Expr"
+
+@dataclass
+class ExponentialLit:
+    lam: "Expr"
+
+DistLit = Union[NormalLit, UniformLit, ExactLit, EmpiricalLit, LogNormalLit, PoissonLit, BinomialLit, GammaLit, BernoulliLit, NegativeBinomialLit, GeometricLit, ExponentialLit]
 
 @dataclass
 class LetStmt:
@@ -49,4 +94,34 @@ class LetStmt:
     value: "Expr"
     span: Span
 
-Expr = Union[NumberLit, VarRef, BinOp, Call]
+@dataclass
+class VarStmt:
+    name: str
+    type_ann: DistLit | None
+    value: "Expr"
+    span: Span
+
+@dataclass
+class AssignStmt:
+    name: str
+    value: "Expr"
+    span: Span
+
+@dataclass
+class Block:
+    stmts: list["Stmt"]
+    span: Span
+
+@dataclass
+class WhileStmt:
+    condition: "Expr"
+    body: Block
+    span: Span
+
+@dataclass
+class ArrayLit:
+    elements: list["Expr"]
+    span: Span
+
+Stmt = Union[LetStmt, VarStmt, AssignStmt, WhileStmt]
+Expr = Union[NumberLit, VarRef, BinOp, Call, ArrayLit]

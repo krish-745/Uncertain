@@ -159,17 +159,21 @@ let success: Measured<Binomial(100, 0.9)> = binomial_read(100, 0.9);
 // Also: Bernoulli, Geometric, NegativeBinomial, Exact
 ```
 
-### Arrays & Mutability
-The language supports block scoping, mutable variables (`var`), assignment, arrays (`[...]`), and `while` loops. The compiler seamlessly tracks dependency lineages across block reassignments!
+### Compile-Time Control Flow & Mutability
+The language supports block scoping, mutable variables (`var`), arrays (`[...]`), `while` and `for` loops, and `if/else` branching. The compiler seamlessly tracks dependency lineages across block reassignments!
+
+> **Note on Control Flow:** `Uncertain` enforces a strict separation between random variables and control flow. Because loops and branches are unrolled and evaluated entirely at compile-time, you **cannot** branch on an uncertain variable (`stddev > 0`). Branching is strictly restricted to deterministic logic (like loop counters). If you branch on a random variable, the compiler will throw an `uncertain-branch` error!
 
 ```calc
 let sensors = [normal, price, wear];
 var sum = 0;
-var iter = 0;
 
-while (iter < 3) {
-    sum = sum + normal; // Typechecker safely tracks dependencies across loop iterations
-    iter = iter + 1;
+for (var i = 0; i < 3; i = i + 1) {
+    if (i < 2) {
+        sum = sum + normal; // Compiler accurately executes branches!
+    } else {
+        sum = sum + price;
+    }
 }
 ```
 

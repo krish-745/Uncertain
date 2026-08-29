@@ -71,7 +71,15 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
             return MeasuredType(fn(lt.dist, rt.dist), lt.deps | rt.deps), diags
             
         elif expr.op in ("<", ">"):
-            return ERROR_TYPE, diags
+            if math.isclose(lt.dist.stddev, 0.0, abs_tol=1e-9) and math.isclose(rt.dist.stddev, 0.0, abs_tol=1e-9):
+                if expr.op == "<":
+                    res = 1.0 if lt.dist.mean < rt.dist.mean else 0.0
+                else:
+                    res = 1.0 if lt.dist.mean > rt.dist.mean else 0.0
+                return MeasuredType(Dist(res, 0.0), lt.deps | rt.deps), diags
+            else:
+                diags.append(Diagnostic("uncertain-branch", expr.span, extra={"msg": "Cannot branch on a non-deterministic condition"}))
+                return ERROR_TYPE, diags
 
         elif expr.op in ("*", "/"):
             diag = check_reuse(expr.op, lt.deps, rt.deps, expr.span)
@@ -279,9 +287,47 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
         return diags
         
     elif isinstance(stmt, WhileStmt):
-        _, diags = synth(stmt.condition, ctx)
-        for s in stmt.body.stmts:
-            diags.extend(check_stmt(s, ctx))
+        diags = []
+        iters = 0
+        while True:
+            cond_typ, d = synth(stmt.condition, ctx)
+            diags.extend(d)
+            if cond_typ is ERROR_TYPE or cond_typ.dist.mean == 0.0:
+                break
+            for s in stmt.body.stmts:
+                diags.extend(check_stmt(s, ctx))
+            iters += 1
+            if iters > 1000:
+                diags.append(Diagnostic("uncertain-branch", stmt.span, extra={"msg": "Loop iteration limit exceeded (1000)"}))
+                break
+        return diags
+        
+    elif isinstance(stmt, IfStmt):
+        cond_typ, diags = synth(stmt.condition, ctx)
+        if cond_typ is not ERROR_TYPE and cond_typ.dist.mean != 0.0:
+            for s in stmt.true_body.stmts:
+                diags.extend(check_stmt(s, ctx))
+        elif stmt.false_body:
+            for s in stmt.false_body.stmts:
+                diags.extend(check_stmt(s, ctx))
+        return diags
+        
+    elif isinstance(stmt, ForStmt):
+        diags = []
+        diags.extend(check_stmt(stmt.init, ctx))
+        iters = 0
+        while True:
+            cond_typ, d = synth(stmt.condition, ctx)
+            diags.extend(d)
+            if cond_typ is ERROR_TYPE or cond_typ.dist.mean == 0.0:
+                break
+            for s in stmt.body.stmts:
+                diags.extend(check_stmt(s, ctx))
+            diags.extend(check_stmt(stmt.increment, ctx))
+            iters += 1
+            if iters > 1000:
+                diags.append(Diagnostic("uncertain-branch", stmt.span, extra={"msg": "Loop iteration limit exceeded (1000)"}))
+                break
         return diags
         
     return []

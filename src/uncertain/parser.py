@@ -42,7 +42,7 @@ class Parser:
     def parse_program(self) -> tuple[List[Stmt], Optional[Expr]]:
         stmts = []
         while self.current():
-            if self.current().type in ("LET", "VAR", "WHILE"):
+            if self.current().type in ("LET", "VAR", "WHILE", "IF", "FOR"):
                 stmts.append(self.parse_statement())
             elif self.current().type == "IDENT" and self.pos + 1 < len(self.tokens) and self.tokens[self.pos+1].type == "EQUALS":
                 stmts.append(self.parse_statement())
@@ -58,19 +58,23 @@ class Parser:
             
         return stmts, expr
 
-    def parse_statement(self) -> Stmt:
+    def parse_statement(self, require_semi: bool = True) -> Stmt:
         tok = self.current()
         if tok.type == "LET":
-            return self.parse_let_stmt()
+            return self.parse_let_stmt(require_semi)
         elif tok.type == "VAR":
-            return self.parse_var_stmt()
+            return self.parse_var_stmt(require_semi)
         elif tok.type == "WHILE":
             return self.parse_while_stmt()
+        elif tok.type == "IF":
+            return self.parse_if_stmt()
+        elif tok.type == "FOR":
+            return self.parse_for_stmt()
         elif tok.type == "IDENT":
-            return self.parse_assign_stmt()
+            return self.parse_assign_stmt(require_semi)
         raise ParseError("Expected statement", tok.line, tok.col)
 
-    def parse_let_stmt(self) -> LetStmt:
+    def parse_let_stmt(self, require_semi: bool = True) -> LetStmt:
         start_tok = self.expect("LET", "Expected 'let'")
         ident = self.expect("IDENT", "Expected identifier after 'let'")
         
@@ -81,13 +85,14 @@ class Parser:
         self.expect("EQUALS", "Expected '=' in let statement")
         
         value = self.parse_expression()
-        self.expect("SEMI", "Expected ';' after let statement")
+        if require_semi:
+            self.expect("SEMI", "Expected ';' after let statement")
         
         length = (value.span.col + value.span.length) - start_tok.col
         span = Span(start_tok.line, start_tok.col, length)
         return LetStmt(ident.value, type_ann, value, span)
 
-    def parse_var_stmt(self) -> VarStmt:
+    def parse_var_stmt(self, require_semi: bool = True) -> VarStmt:
         start_tok = self.expect("VAR", "Expected 'var'")
         ident = self.expect("IDENT", "Expected identifier after 'var'")
         
@@ -98,17 +103,19 @@ class Parser:
         self.expect("EQUALS", "Expected '=' in var statement")
         
         value = self.parse_expression()
-        self.expect("SEMI", "Expected ';' after var statement")
+        if require_semi:
+            self.expect("SEMI", "Expected ';' after var statement")
         
         length = (value.span.col + value.span.length) - start_tok.col
         span = Span(start_tok.line, start_tok.col, length)
         return VarStmt(ident.value, type_ann, value, span)
 
-    def parse_assign_stmt(self) -> AssignStmt:
+    def parse_assign_stmt(self, require_semi: bool = True) -> AssignStmt:
         ident_tok = self.expect("IDENT", "Expected identifier")
         self.expect("EQUALS", "Expected '=' in assignment")
         value = self.parse_expression()
-        self.expect("SEMI", "Expected ';' after assignment")
+        if require_semi:
+            self.expect("SEMI", "Expected ';' after assignment")
         
         length = (value.span.col + value.span.length) - ident_tok.col
         span = Span(ident_tok.line, ident_tok.col, length)
@@ -121,9 +128,43 @@ class Parser:
         self.expect("RPAREN", "Expected ')' after condition")
         
         body = self.parse_block()
-        length = (body.span.col + body.span.length) - start_tok.col
+        
+        length = (self.tokens[self.pos-1].col + 1) - start_tok.col
         span = Span(start_tok.line, start_tok.col, length)
         return WhileStmt(condition, body, span)
+
+    def parse_if_stmt(self) -> IfStmt:
+        start_tok = self.expect("IF", "Expected 'if'")
+        self.expect("LPAREN", "Expected '(' after if")
+        condition = self.parse_expression()
+        self.expect("RPAREN", "Expected ')' after condition")
+        
+        true_body = self.parse_block()
+        
+        false_body = None
+        if self.match("ELSE"):
+            false_body = self.parse_block()
+            
+        length = (self.tokens[self.pos-1].col + 1) - start_tok.col
+        span = Span(start_tok.line, start_tok.col, length)
+        return IfStmt(condition, true_body, false_body, span)
+
+    def parse_for_stmt(self) -> ForStmt:
+        start_tok = self.expect("FOR", "Expected 'for'")
+        self.expect("LPAREN", "Expected '(' after for")
+        
+        init = self.parse_statement(require_semi=True)
+        condition = self.parse_expression()
+        self.expect("SEMI", "Expected ';' after condition")
+        increment = self.parse_statement(require_semi=False)
+        
+        self.expect("RPAREN", "Expected ')' after increment")
+        
+        body = self.parse_block()
+        
+        length = (self.tokens[self.pos-1].col + 1) - start_tok.col
+        span = Span(start_tok.line, start_tok.col, length)
+        return ForStmt(init, condition, increment, body, span)
 
     def parse_block(self) -> Block:
         start_tok = self.expect("LBRACE", "Expected '{'")

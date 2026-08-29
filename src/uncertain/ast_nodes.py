@@ -119,9 +119,24 @@ class WhileStmt:
     span: Span
 
 @dataclass
+class IfStmt:
+    condition: "Expr"
+    true_body: Block
+    false_body: Block | None
+    span: Span
+
+@dataclass
+class ForStmt:
+    init: "Stmt"
+    condition: "Expr"
+    increment: "Stmt"
+    body: Block
+    span: Span
+
+@dataclass
 class ArrayLit:
     elements: list["Expr"]
     span: Span
 
-Stmt = Union[LetStmt, VarStmt, AssignStmt, WhileStmt]
+Stmt = Union[LetStmt, VarStmt, AssignStmt, WhileStmt, IfStmt, ForStmt]
 Expr = Union[NumberLit, VarRef, BinOp, Call, ArrayLit]

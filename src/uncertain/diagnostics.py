@@ -40,7 +40,12 @@ def format_diagnostic(diag: Diagnostic, source_lines: list[str]) -> str:
         help_msg = ""
     elif diag.kind == "approximation-warning":
         title = "approximation-warning"
-        caret_msg = "warning here"
+        caret_msg = "Moment-matching approximation used for non-Normal distribution"
+        note = diag.extra.get("msg", "")
+        help_msg = ""
+    elif diag.kind == "uncertain-branch":
+        title = "uncertain-branch"
+        caret_msg = "Cannot branch on a non-deterministic condition"
         note = diag.extra.get("msg", "")
         help_msg = ""
     else:

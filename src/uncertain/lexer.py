@@ -40,6 +40,9 @@ EXPONENTIAL = "EXPONENTIAL"
 EXACT = "EXACT"
 VAR = "VAR"
 WHILE = "WHILE"
+FOR = "FOR"
+IF = "IF"
+ELSE = "ELSE"
 
 class LexerError(Exception):
     def __init__(self, message: str, line: int, col: int):
@@ -88,6 +91,12 @@ def tokenize(source: str) -> Iterator[Token]:
                 yield Token(VAR, value, line_num, column)
             elif value == 'while':
                 yield Token(WHILE, value, line_num, column)
+            elif value == 'for':
+                yield Token(FOR, value, line_num, column)
+            elif value == 'if':
+                yield Token(IF, value, line_num, column)
+            elif value == 'else':
+                yield Token(ELSE, value, line_num, column)
             elif value == 'Measured':
                 yield Token(MEASURED, value, line_num, column)
             elif value == 'Normal':

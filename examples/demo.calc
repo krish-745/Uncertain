@@ -21,11 +21,12 @@ let discrete_sensors = [click_rate, success_rate, event_flag, failures_until_suc
 
 // 5. Mutability, Scope & Loops
 var sum = 0;
-var iter = 0;
 
-while (iter < 3) {
-    // 6. Moment-Matching Warning (Mixed Distributions)
-    // This will trigger an `approximation-warning` because we are adding Normal + Empirical + Poisson
-    sum = sum + normal_sensor + custom_sensor + click_rate;
-    iter = iter + 1;
+// 6. For Loops & Branching
+for (var i = 0; i < 3; i = i + 1) {
+    if (i < 2) {
+        sum = sum + normal_sensor;
+    } else {
+        sum = sum + custom_sensor;
+    }
 }

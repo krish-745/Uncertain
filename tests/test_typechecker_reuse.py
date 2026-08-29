@@ -54,3 +54,31 @@ def test_typecheck_correlated_no_error():
     diags = check_stmt(stmts[1], ctx)
     
     assert len(diags) == 0
+
+def test_typecheck_reuse_intermediate_binding():
+    source = """
+    let a = sensor_read();
+    let b = a;
+    let c = b * b;
+    """
+    stmts, _ = parse(source)
+    ctx = TypeContext()
+    check_stmt(stmts[0], ctx)
+    check_stmt(stmts[1], ctx)
+    diags = check_stmt(stmts[2], ctx)
+    
+    assert len(diags) == 1
+    assert diags[0].kind == "uncertain-reuse"
+    assert "a" in diags[0].overlapping_vars
+
+def test_typecheck_constant_reuse_no_error():
+    source = """
+    let a = 1.0;
+    let b = a * a;
+    """
+    stmts, _ = parse(source)
+    ctx = TypeContext()
+    check_stmt(stmts[0], ctx)
+    diags = check_stmt(stmts[1], ctx)
+    
+    assert len(diags) == 0

@@ -273,7 +273,11 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
                     if not (math.isclose(inferred.dist.mean, exp_mean, rel_tol=1e-3, abs_tol=1e-3) and math.isclose(inferred.dist.stddev, exp_std, rel_tol=1e-3, abs_tol=1e-3)):
                         diags.append(Diagnostic("type-mismatch", stmt.span))
         
-        final_deps = inferred.deps | frozenset({stmt.name})
+        if inferred.dist.stddev > 0 and not inferred.deps:
+            final_deps = frozenset({stmt.name})
+        else:
+            final_deps = inferred.deps
+            
         ctx.bind(stmt.name, MeasuredType(inferred.dist, final_deps))
         return diags
         
@@ -282,7 +286,11 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
         if not typ:
             return [Diagnostic("undefined-var", stmt.span, extra={"name": stmt.name})]
         inferred, diags = synth(stmt.value, ctx)
-        final_deps = inferred.deps | frozenset({stmt.name})
+        if inferred.dist.stddev > 0 and not inferred.deps:
+            final_deps = frozenset({stmt.name})
+        else:
+            final_deps = inferred.deps
+            
         ctx.bind(stmt.name, MeasuredType(inferred.dist, final_deps))
         return diags
         

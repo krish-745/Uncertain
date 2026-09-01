@@ -4,6 +4,8 @@
 
 > **A statically-typed arithmetic DSL where every value's type encodes its distributional uncertainty — and the compiler proves how that uncertainty compounds.**
 
+**Source & docs on GitHub:** [github.com/krish-745/Uncertain](https://github.com/krish-745/Uncertain)
+
 ---
 
 ## Table of Contents

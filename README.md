@@ -11,6 +11,8 @@
 
 > **A statically-typed arithmetic DSL where every value's type encodes its distributional uncertainty — and the compiler proves how that uncertainty compounds.**
 
+**Available on PyPI:** [pypi.org/project/uncertain-lang](https://pypi.org/project/uncertain-lang)
+
 ---
 
 ## Table of Contents

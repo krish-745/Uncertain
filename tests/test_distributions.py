@@ -32,7 +32,7 @@ def test_square_vs_mul_independent():
     res_sq = square(d1)
     res_mul = mul_independent(d1, d1)
     
-    assert res_sq.mean == res_mul.mean
+    assert res_sq.mean == res_mul.mean + (d1.stddev ** 2)
     assert not math.isclose(res_sq.stddev, res_mul.stddev, rel_tol=1e-5)
     
     # The standard deviation of X^2 is larger than independent X1 * X2

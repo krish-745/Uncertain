@@ -129,15 +129,15 @@ uv run python scripts/compare_uncertainties.py
 **The Output:**
 ```text
 1. Naive Hand Calculation (Assuming Independence):
-   Result: 100.00 ± 28.28
+   Result: 4.00 ± 14.14
    (DANGEROUS: Silently understates variance by ignoring correlation)
 
 2. Python's `uncertainties` package (a * a):
-   Result: 100.00 ± 40.00
-   (BETTER: Detects correlation, but uses linear Taylor approximation, dropping higher-order terms.)
+   Result: 4.00 ± 20.00
+   (BETTER: Detects correlation, but uses linear Taylor approximation, dropping higher-order terms. Notice the mean is completely wrong!)
 
 3. Uncertain DSL (forces `square(a)` at compile time):
-   Result: 100.00 ± 40.40
+   Result: 29.00 ± 40.62
    (PERFECT: Compiler caught the reuse, forced explicit intent, and used the exact higher-order formula.)
 ```
 

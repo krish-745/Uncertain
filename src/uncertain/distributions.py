@@ -30,8 +30,9 @@ def div_independent(a: Dist, b: Dist) -> Dist:
     return Dist(mean, abs(mean) * rel)
 
 def square(a: Dist) -> Dist:
+    # E[X^2] = μ^2 + σ^2
     # Var(X^2) = 2σ^4 + 4μ^2σ^2 for a normal X
-    mean = a.mean ** 2
+    mean = (a.mean ** 2) + (a.stddev ** 2)
     variance = 2 * (a.stddev ** 4) + 4 * (a.mean ** 2) * (a.stddev ** 2)
     return Dist(mean, math.sqrt(variance))
 

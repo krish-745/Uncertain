@@ -1,0 +1,3 @@
+let a: Gaussian = N(0.0, 10.0);
+let result = a * a;
+return result;

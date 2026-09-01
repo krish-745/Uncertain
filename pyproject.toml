@@ -1,6 +1,6 @@
 [project]
 name = "uncertain-lang"
-version = "0.3.5"
+version = "0.3.6"
 description = "A domain-specific language for safe, compile-time tracking of distributional uncertainty and correlations."
 readme = "README_pypi.md"
 requires-python = ">=3.10"

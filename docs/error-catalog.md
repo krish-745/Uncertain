@@ -89,3 +89,50 @@ error: math domain error
    |
    = note: cannot compute the square root of a distribution with a negative mean (-5.0)
 ```
+
+---
+
+## `approximation-warning`
+**Description:** Emitted as a warning when a mathematical operation combines variables from different distribution families (e.g., adding a Normal distribution and a Poisson distribution). The compiler falls back to a Normal approximation using moment-matching.
+
+**Example:**
+```calc
+let a = Normal(10.0, 1.0);
+let b = Poisson(5);
+let c = a + b;
+```
+
+**Diagnostic Output:**
+```text
+warning: approximation-warning
+  --> line 3:9
+   |
+ 3 | let c = a + b;
+   |         ^^^^^ Moment-matching approximation used for non-Normal distribution
+   |
+   = note: Moment-matching approximation used for non-Normal distribution
+```
+
+---
+
+## `uncertain-branch`
+**Description:** Emitted when attempting to use a probability distribution (uncertain variable) as the condition for an `if` statement or loop, or when a loop exceeds the maximum compile-time unrolling limit (1000 iterations). Branching logic must be deterministic.
+
+**Example:**
+```calc
+let a = Normal(10.0, 1.0);
+if (a > 5.0) {
+    let b = 1;
+}
+```
+
+**Diagnostic Output:**
+```text
+error: uncertain-branch
+  --> line 2:5
+   |
+ 2 | if (a > 5.0) {
+   |     ^^^^^^^ Cannot branch on a non-deterministic condition
+   |
+   = note: Cannot branch on a non-deterministic condition
+```

@@ -28,9 +28,11 @@
 - [Head-to-Head Comparison](#head-to-head-comparison)
 - [Language Guide](#language-guide)
   - [11 Statistical Distributions](#11-statistical-distributions)
-  - [Control Flow & Mutability](#compile-time-control-flow--mutability)
+  - [Compile-Time Control Flow & Mutability](#compile-time-control-flow--mutability)
   - [Math & Operations](#math--operations)
   - [Safe Variable Reuse](#safe-variable-reuse)
+  - [Functions & Arrays](#functions--arrays)
+  - [Language Server (LSP)](#language-server-lsp)
   - [CLI Reference](#cli-reference)
 - [Architecture](#architecture)
 - [Testing](#testing)
@@ -264,6 +266,31 @@ let w_squared = square(w);
 // For two distinct variables with a known covariance:
 // Uses the full Var(XY) formula including the covariance term
 let correlated_area = correlated(w, h, cov=0.5);
+```
+
+### Functions & Arrays
+
+`Uncertain` supports custom function definitions and first-class arrays. Functions are evaluated dynamically during type-checking.
+
+```calc
+fn compute_risk(base_risk: Measured<Normal(0,1)>, multiplier) -> Measured<Normal> {
+    return base_risk * multiplier;
+}
+
+let risks = [sensor_read(), sensor_read(), sensor_read()];
+
+// Higher-order array functions evaluate at compile-time:
+let mapped = map(risks, compute_risk);
+let total_risk = reduce(mapped, add_risks, 0.0);
+```
+
+### Language Server (LSP)
+
+The compiler ships with a built-in Language Server to provide real-time diagnostic squiggles and hover information directly in your editor (like VS Code, Neovim, etc.).
+
+To start the LSP server, simply run:
+```bash
+uncertain --lsp
 ```
 
 ### CLI Reference

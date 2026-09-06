@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "api-documenter": {
+      "source": "sickn33/agentic-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/api-documenter/SKILL.md",
+      "computedHash": "9860bb0a30d380f7d076cd77fcb5ba84189363ccfe39a7db2803d9d5663cf9e9"
+    },
+    "python-testing": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "python-testing/SKILL.md",
+      "computedHash": "7fab03e585cb8850337316e97f5882bef01fa3e72221731cf080337955d0269f"
+    }
+  }
+}

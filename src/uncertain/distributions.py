@@ -18,16 +18,39 @@ def sub(a: Dist, b: Dist) -> Dist:
 
 def mul_independent(a: Dist, b: Dist) -> Dist:
     mean = a.mean * b.mean
-    # delta-method relative-variance formula; guard against mean == 0
-    rel = math.sqrt((a.stddev / a.mean) ** 2 + (b.stddev / b.mean) ** 2) if a.mean and b.mean else 0.0
-    return Dist(mean, abs(mean) * rel)
+    variance = (a.mean**2 * b.stddev**2) + (b.mean**2 * a.stddev**2) + (a.stddev**2 * b.stddev**2)
+    return Dist(mean, math.sqrt(max(0.0, variance)))
 
 def div_independent(a: Dist, b: Dist) -> Dist:
     if b.mean == 0:
         raise MathDomainError("cannot divide by a distribution with a zero mean")
     mean = a.mean / b.mean
-    rel = math.sqrt((a.stddev / a.mean) ** 2 + (b.stddev / b.mean) ** 2) if a.mean and b.mean else 0.0
-    return Dist(mean, abs(mean) * rel)
+    variance = (a.stddev**2 / b.mean**2) + ((a.mean**2 * b.stddev**2) / b.mean**4)
+    return Dist(mean, math.sqrt(max(0.0, variance)))
+
+def abs_dist(a: Dist) -> Dist:
+    return Dist(abs(a.mean), a.stddev)
+
+def log_dist(a: Dist) -> Dist:
+    if a.mean <= 0:
+        raise MathDomainError(f"cannot compute the log of a distribution with non-positive mean ({a.mean})")
+    return Dist(math.log(a.mean), a.stddev / a.mean)
+
+def exp_dist(a: Dist) -> Dist:
+    mean = math.exp(a.mean)
+    return Dist(mean, a.stddev * mean)
+
+def pow_const(a: Dist, n: int) -> Dist:
+    if n == 2:
+        return square(a)
+    elif n == 3:
+        mean = (a.mean ** 3) + 3 * a.mean * (a.stddev ** 2)
+        variance = 9 * (a.mean ** 4) * (a.stddev ** 2) + 36 * (a.mean ** 2) * (a.stddev ** 4) + 15 * (a.stddev ** 6)
+        return Dist(mean, math.sqrt(max(0.0, variance)))
+    else:
+        mean = a.mean ** n
+        variance = (n * (a.mean ** (n - 1)) * a.stddev) ** 2
+        return Dist(mean, math.sqrt(max(0.0, variance)))
 
 def square(a: Dist) -> Dist:
     # E[X^2] = μ^2 + σ^2

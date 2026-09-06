@@ -4,6 +4,7 @@ from typing import Tuple, List, Optional
 from uncertain.ast_nodes import *
 from uncertain.distributions import (
     Dist, add, sub, mul_independent, div_independent, square, sqrt_dist, correlated_product,
+    abs_dist, log_dist, exp_dist, pow_const,
     MathDomainError
 )
 from uncertain.diagnostics import Diagnostic
@@ -26,12 +27,13 @@ class TypeContext:
     def bind(self, name: str, typ: MeasuredType):
         self.bindings[name] = typ
 
+class NotConstantError(Exception):
+    pass
+
 def eval_const(expr: Expr) -> float:
-    # helper for cov kwargs
     if isinstance(expr, NumberLit):
         return expr.value
-    # for simplicity, we only allow constants
-    return 0.0
+    raise NotConstantError("Expected a constant numeric literal")
 
 def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]:
     if isinstance(expr, NumberLit):
@@ -95,78 +97,104 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
             return MeasuredType(res, lt.deps | rt.deps), diags
             
     elif isinstance(expr, Call):
-        if expr.name == "square" and len(expr.args) == 1:
-            at, ad = synth(expr.args[0], ctx)
-            return MeasuredType(square(at.dist), at.deps), ad
-            
-        elif expr.name == "sqrt" and len(expr.args) == 1:
-            at, ad = synth(expr.args[0], ctx)
-            try:
-                res = sqrt_dist(at.dist)
-            except MathDomainError as e:
-                return ERROR_TYPE, ad + [Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)})]
-            return MeasuredType(res, at.deps), ad
-            
-        elif expr.name == "correlated" and len(expr.args) >= 2:
-            at, ad = synth(expr.args[0], ctx)
-            bt, bd = synth(expr.args[1], ctx)
-            cov_expr = expr.kwargs.get("cov", NumberLit(0.0, expr.span))
-            cov = eval_const(cov_expr)
-            # Pre-cleared reuse, so we don't check_reuse
-            return MeasuredType(correlated_product(at.dist, bt.dist, cov), at.deps | bt.deps), ad + bd
-            
-        elif expr.name == "sensor_read":
-            return MeasuredType(Dist(10.0, 1.0), frozenset()), []
-            
-        elif expr.name == "uniform_read":
-            return MeasuredType(Dist(5.0, 2.8867, "Uniform"), frozenset()), []
-            
-        elif expr.name == "empirical_read" and len(expr.args) == 1:
-            if isinstance(expr.args[0], ArrayLit):
-                vals = []
-                for el in expr.args[0].elements:
-                    if isinstance(el, NumberLit):
-                        vals.append(el.value)
-                if vals:
-                    mean = sum(vals) / len(vals)
-                    stddev = math.sqrt(sum((v - mean)**2 for v in vals) / len(vals))
-                    return MeasuredType(Dist(mean, stddev, "Empirical"), frozenset()), []
-            return ERROR_TYPE, []
-            
-        elif expr.name == "lognormal_read" and len(expr.args) == 2:
-            mu, sigma = eval_const(expr.args[0]), eval_const(expr.args[1])
-            m = math.exp(mu + (sigma**2) / 2.0)
-            s = math.sqrt((math.exp(sigma**2) - 1.0) * math.exp(2.0*mu + sigma**2))
-            return MeasuredType(Dist(m, s, "LogNormal"), frozenset()), []
-        elif expr.name == "poisson_read" and len(expr.args) == 1:
-            lam = eval_const(expr.args[0])
-            return MeasuredType(Dist(lam, math.sqrt(lam) if lam >= 0 else 0.0, "Poisson"), frozenset()), []
-        elif expr.name == "binomial_read" and len(expr.args) == 2:
-            n, p = eval_const(expr.args[0]), eval_const(expr.args[1])
-            return MeasuredType(Dist(n * p, math.sqrt(n * p * (1 - p)) if n > 0 and 0 <= p <= 1 else 0.0, "Binomial"), frozenset()), []
-        elif expr.name == "gamma_read" and len(expr.args) == 2:
-            k, theta = eval_const(expr.args[0]), eval_const(expr.args[1])
-            return MeasuredType(Dist(k * theta, math.sqrt(k * (theta**2)), "Gamma"), frozenset()), []
-        elif expr.name == "bernoulli_read" and len(expr.args) == 1:
-            p = eval_const(expr.args[0])
-            return MeasuredType(Dist(p, math.sqrt(p * (1 - p)) if 0 <= p <= 1 else 0.0, "Bernoulli"), frozenset()), []
-        elif expr.name == "negbinom_read" and len(expr.args) == 2:
-            r, p = eval_const(expr.args[0]), eval_const(expr.args[1])
-            m = (p * r) / (1 - p) if p > 0 and p < 1 and r > 0 else 0.0
-            s = math.sqrt((p * r) / ((1 - p)**2)) if p > 0 and p < 1 and r > 0 else 0.0
-            return MeasuredType(Dist(m, s, "NegativeBinomial"), frozenset()), []
-        elif expr.name == "geometric_read" and len(expr.args) == 1:
-            p = eval_const(expr.args[0])
-            m = 1.0 / p if p > 0 and p <= 1 else 0.0
-            s = math.sqrt((1.0 - p) / (p**2)) if p > 0 and p <= 1 else 0.0
-            return MeasuredType(Dist(m, s, "Geometric"), frozenset()), []
-        elif expr.name == "exponential_read" and len(expr.args) == 1:
-            lam = eval_const(expr.args[0])
-            m = 1.0 / lam if lam > 0 else 0.0
-            s = math.sqrt(1.0 / (lam**2)) if lam > 0 else 0.0
-            return MeasuredType(Dist(m, s, "Exponential"), frozenset()), []
-            
-        return ERROR_TYPE, []
+        diags = []
+        try:
+            if expr.name == "square" and len(expr.args) == 1:
+                at, ad = synth(expr.args[0], ctx)
+                return MeasuredType(square(at.dist), at.deps), ad + diags
+                
+            elif expr.name == "sqrt" and len(expr.args) == 1:
+                at, ad = synth(expr.args[0], ctx)
+                try:
+                    res = sqrt_dist(at.dist)
+                except MathDomainError as e:
+                    return ERROR_TYPE, ad + diags + [Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)})]
+                return MeasuredType(res, at.deps), ad + diags
+
+            elif expr.name == "abs" and len(expr.args) == 1:
+                at, ad = synth(expr.args[0], ctx)
+                return MeasuredType(abs_dist(at.dist), at.deps), ad + diags
+
+            elif expr.name == "log" and len(expr.args) == 1:
+                at, ad = synth(expr.args[0], ctx)
+                try:
+                    res = log_dist(at.dist)
+                except MathDomainError as e:
+                    return ERROR_TYPE, ad + diags + [Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)})]
+                return MeasuredType(res, at.deps), ad + diags
+
+            elif expr.name == "exp" and len(expr.args) == 1:
+                at, ad = synth(expr.args[0], ctx)
+                return MeasuredType(exp_dist(at.dist), at.deps), ad + diags
+
+            elif expr.name == "pow" and len(expr.args) == 2:
+                at, ad = synth(expr.args[0], ctx)
+                n_val = eval_const(expr.args[1])
+                if not n_val.is_integer():
+                    raise NotConstantError("Exponent must be an integer constant")
+                return MeasuredType(pow_const(at.dist, int(n_val)), at.deps), ad + diags
+                
+            elif expr.name == "correlated" and len(expr.args) >= 2:
+                at, ad = synth(expr.args[0], ctx)
+                bt, bd = synth(expr.args[1], ctx)
+                cov_expr = expr.kwargs.get("cov", NumberLit(0.0, expr.span))
+                cov = eval_const(cov_expr)
+                return MeasuredType(correlated_product(at.dist, bt.dist, cov), at.deps | bt.deps), ad + bd + diags
+                
+            elif expr.name == "sensor_read":
+                return MeasuredType(Dist(10.0, 1.0), frozenset()), diags
+                
+            elif expr.name == "uniform_read":
+                return MeasuredType(Dist(5.0, 2.8867, "Uniform"), frozenset()), diags
+                
+            elif expr.name == "empirical_read" and len(expr.args) == 1:
+                if isinstance(expr.args[0], ArrayLit):
+                    vals = []
+                    for el in expr.args[0].elements:
+                        if isinstance(el, NumberLit):
+                            vals.append(el.value)
+                    if vals:
+                        mean = sum(vals) / len(vals)
+                        stddev = math.sqrt(sum((v - mean)**2 for v in vals) / len(vals))
+                        return MeasuredType(Dist(mean, stddev, "Empirical"), frozenset()), diags
+                return ERROR_TYPE, diags
+                
+            elif expr.name == "lognormal_read" and len(expr.args) == 2:
+                mu, sigma = eval_const(expr.args[0]), eval_const(expr.args[1])
+                m = math.exp(mu + (sigma**2) / 2.0)
+                s = math.sqrt((math.exp(sigma**2) - 1.0) * math.exp(2.0*mu + sigma**2))
+                return MeasuredType(Dist(m, s, "LogNormal"), frozenset()), diags
+            elif expr.name == "poisson_read" and len(expr.args) == 1:
+                lam = eval_const(expr.args[0])
+                return MeasuredType(Dist(lam, math.sqrt(lam) if lam >= 0 else 0.0, "Poisson"), frozenset()), diags
+            elif expr.name == "binomial_read" and len(expr.args) == 2:
+                n, p = eval_const(expr.args[0]), eval_const(expr.args[1])
+                return MeasuredType(Dist(n * p, math.sqrt(n * p * (1 - p)) if n > 0 and 0 <= p <= 1 else 0.0, "Binomial"), frozenset()), diags
+            elif expr.name == "gamma_read" and len(expr.args) == 2:
+                k, theta = eval_const(expr.args[0]), eval_const(expr.args[1])
+                return MeasuredType(Dist(k * theta, math.sqrt(k * (theta**2)), "Gamma"), frozenset()), diags
+            elif expr.name == "bernoulli_read" and len(expr.args) == 1:
+                p = eval_const(expr.args[0])
+                return MeasuredType(Dist(p, math.sqrt(p * (1 - p)) if 0 <= p <= 1 else 0.0, "Bernoulli"), frozenset()), diags
+            elif expr.name == "negbinom_read" and len(expr.args) == 2:
+                r, p = eval_const(expr.args[0]), eval_const(expr.args[1])
+                m = (p * r) / (1 - p) if p > 0 and p < 1 and r > 0 else 0.0
+                s = math.sqrt((p * r) / ((1 - p)**2)) if p > 0 and p < 1 and r > 0 else 0.0
+                return MeasuredType(Dist(m, s, "NegativeBinomial"), frozenset()), diags
+            elif expr.name == "geometric_read" and len(expr.args) == 1:
+                p = eval_const(expr.args[0])
+                m = 1.0 / p if p > 0 and p <= 1 else 0.0
+                s = math.sqrt((1.0 - p) / (p**2)) if p > 0 and p <= 1 else 0.0
+                return MeasuredType(Dist(m, s, "Geometric"), frozenset()), diags
+            elif expr.name == "exponential_read" and len(expr.args) == 1:
+                lam = eval_const(expr.args[0])
+                m = 1.0 / lam if lam > 0 else 0.0
+                s = math.sqrt(1.0 / (lam**2)) if lam > 0 else 0.0
+                return MeasuredType(Dist(m, s, "Exponential"), frozenset()), diags
+                
+            return ERROR_TYPE, diags
+        except NotConstantError as e:
+            return ERROR_TYPE, [Diagnostic("type-mismatch", expr.span, extra={"msg": str(e)})]
 
     elif isinstance(expr, ArrayLit):
         diags = []
@@ -271,6 +299,11 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
                     exp_mean = 1.0 / lam if lam > 0 else 0.0
                     exp_std = math.sqrt(1.0 / (lam**2)) if lam > 0 else 0.0
                     if not (math.isclose(inferred.dist.mean, exp_mean, rel_tol=1e-3, abs_tol=1e-3) and math.isclose(inferred.dist.stddev, exp_std, rel_tol=1e-3, abs_tol=1e-3)):
+                        diags.append(Diagnostic("type-mismatch", stmt.span))
+            elif isinstance(stmt.type_ann, ExactLit):
+                if isinstance(stmt.type_ann.value, NumberLit):
+                    exp_val = stmt.type_ann.value.value
+                    if not (math.isclose(inferred.dist.mean, exp_val, rel_tol=1e-3, abs_tol=1e-3) and math.isclose(inferred.dist.stddev, 0.0, rel_tol=1e-3, abs_tol=1e-3)):
                         diags.append(Diagnostic("type-mismatch", stmt.span))
         
         if inferred.dist.stddev > 0 and not inferred.deps:

@@ -19,7 +19,7 @@ def test_typecheck_mul():
     typ = ctx.lookup("c")
     assert typ is not None
     assert typ.dist.mean == 100.0
-    assert math.isclose(typ.dist.stddev, 14.14213, rel_tol=1e-3)
+    assert math.isclose(typ.dist.stddev, 14.1774, rel_tol=1e-3)
 
 def test_typecheck_div():
     source = """

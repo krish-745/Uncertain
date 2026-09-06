@@ -56,6 +56,7 @@ def tokenize(source: str) -> Iterator[Token]:
         ('IDENT',    r'[A-Za-z_][A-Za-z0-9_]*'), # Identifiers
         ('COMMENT',  r'//.*'),         # Comments
         ('PLUS',     r'\+'),
+        ('ARROW',    r'->'),
         ('MINUS',    r'-'),
         ('STAR',     r'\*'),
         ('SLASH',    r'/'),
@@ -97,6 +98,10 @@ def tokenize(source: str) -> Iterator[Token]:
                 yield Token(IF, value, line_num, column)
             elif value == 'else':
                 yield Token(ELSE, value, line_num, column)
+            elif value == 'fn':
+                yield Token("FN", value, line_num, column)
+            elif value == 'return':
+                yield Token("RETURN", value, line_num, column)
             elif value == 'Measured':
                 yield Token(MEASURED, value, line_num, column)
             elif value == 'Normal':
@@ -125,7 +130,7 @@ def tokenize(source: str) -> Iterator[Token]:
                 yield Token(EXACT, value, line_num, column)
             else:
                 yield Token(IDENT, value, line_num, column)
-        elif kind in ('PLUS', 'MINUS', 'STAR', 'SLASH', 'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET', 'LANGLE', 'RANGLE', 'COMMA', 'COLON', 'EQUALS', 'SEMI'):
+        elif kind in ('PLUS', 'MINUS', 'STAR', 'SLASH', 'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET', 'LANGLE', 'RANGLE', 'COMMA', 'COLON', 'EQUALS', 'SEMI', 'ARROW'):
             yield Token(kind, value, line_num, column)
         elif kind == 'NEWLINE':
             line_start = mo.end()

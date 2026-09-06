@@ -12,20 +12,38 @@ from uncertain.dependency import check_reuse, DepSet
 
 @dataclass(frozen=True)
 class MeasuredType:
-    dist: Dist
+    dist: Dist | tuple["MeasuredType", ...]
     deps: DepSet
 
 ERROR_TYPE = MeasuredType(Dist(0.0, 0.0), frozenset())
 
 class TypeContext:
-    def __init__(self):
+    def __init__(self, parent: "TypeContext" = None):
         self.bindings: dict[str, MeasuredType] = {}
+        self.functions: dict[str, FnDefStmt] = {}
+        self.parent = parent
 
     def lookup(self, name: str) -> Optional[MeasuredType]:
-        return self.bindings.get(name)
+        if name in self.bindings:
+            return self.bindings[name]
+        if self.parent:
+            return self.parent.lookup(name)
+        return None
 
     def bind(self, name: str, typ: MeasuredType):
         self.bindings[name] = typ
+        
+    def lookup_fn(self, name: str) -> Optional[FnDefStmt]:
+        if name in self.functions:
+            return self.functions[name]
+        if self.parent:
+            return self.parent.lookup_fn(name)
+        return None
+
+class ReturnException(Exception):
+    def __init__(self, typ: MeasuredType, diags: list[Diagnostic]):
+        self.typ = typ
+        self.diags = diags
 
 class NotConstantError(Exception):
     pass
@@ -33,7 +51,16 @@ class NotConstantError(Exception):
 def eval_const(expr: Expr) -> float:
     if isinstance(expr, NumberLit):
         return expr.value
-    raise NotConstantError("Expected a constant numeric literal")
+    elif isinstance(expr, BinOp):
+        if expr.op == "+":
+            return eval_const(expr.left) + eval_const(expr.right)
+        elif expr.op == "-":
+            return eval_const(expr.left) - eval_const(expr.right)
+        elif expr.op == "*":
+            return eval_const(expr.left) * eval_const(expr.right)
+        elif expr.op == "/":
+            return eval_const(expr.left) / eval_const(expr.right)
+    raise NotConstantError("Expected a constant numeric expression")
 
 def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]:
     if isinstance(expr, NumberLit):
@@ -44,21 +71,44 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
         if not typ:
             diag = Diagnostic("undefined-var", expr.span, extra={"name": expr.name})
             return ERROR_TYPE, [diag]
-        # Direct var ref, its deps are just itself
-        # Wait, the design doc: env.get(n, {n}). In synth, typ.deps already has it?
-        # When we bind, what are its deps? `let a = 1;` -> deps = {}.
-        # `let a = sensor_read();` -> deps = {"a"}.
-        # So we should probably just return `MeasuredType(typ.dist, frozenset({expr.name}))` 
-        # so that when it is referenced, it introduces its own name as a dependency!
-        # Wait, if `a = b + c`, `a`'s deps are `b` and `c`?
-        # The design doc says: DepSet = frozenset[str] # set of root variable names contributing uncertainty.
-        # If `let a = b + c`, and we use `a`, is the dep `a`, or `{b, c}`?
-        # If we just track the bound variables themselves, when we use `a * a`, the dep is `{a}`.
-        # Actually, in a straight-line let-binding DSL, `a` is a new variable. 
-        # Let's just return typ.deps for now. But wait, if `a` is bound to `sensor_read()`, its deps should be `{"a"}`!
-        # The binding logic in `check_stmt` should handle adding `{"a"}`.
         return typ, []
         
+    elif isinstance(expr, ArrayLit):
+        diags = []
+        elements = []
+        deps = set()
+        for el in expr.elements:
+            t, d = synth(el, ctx)
+            diags.extend(d)
+            elements.append(t)
+            deps.update(t.deps)
+        return MeasuredType(tuple(elements), frozenset(deps)), diags
+
+    elif isinstance(expr, ArrayAccess):
+        arr_t, diags = synth(expr.array, ctx)
+        idx_t, idx_diags = synth(expr.index, ctx)
+        diags.extend(idx_diags)
+        
+        if not isinstance(arr_t.dist, tuple):
+            diags.append(Diagnostic("type-mismatch", expr.array.span, extra={"msg": "Cannot index into a non-array"}))
+            return ERROR_TYPE, diags
+            
+        try:
+            # Check if index is deterministic and integer
+            if not math.isclose(idx_t.dist.stddev, 0.0, abs_tol=1e-9):
+                raise ValueError("Index must be deterministic")
+            if not idx_t.dist.mean.is_integer():
+                raise ValueError("Index must be an integer")
+                
+            idx_val = int(idx_t.dist.mean)
+            if idx_val < 0 or idx_val >= len(arr_t.dist):
+                raise ValueError("Index out of bounds")
+                
+            return arr_t.dist[idx_val], diags
+        except ValueError as e:
+            diags.append(Diagnostic("math-domain-error", expr.index.span, extra={"msg": str(e)}))
+            return ERROR_TYPE, diags
+            
     elif isinstance(expr, BinOp):
         lt, ld = synth(expr.left, ctx)
         rt, rd = synth(expr.right, ctx)
@@ -192,7 +242,96 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
                 s = math.sqrt(1.0 / (lam**2)) if lam > 0 else 0.0
                 return MeasuredType(Dist(m, s, "Exponential"), frozenset()), diags
                 
-            return ERROR_TYPE, diags
+            elif expr.name in ("map", "filter") and len(expr.args) == 2:
+                arr_t, d1 = synth(expr.args[0], ctx)
+                diags.extend(d1)
+                if not isinstance(arr_t.dist, tuple):
+                    diags.append(Diagnostic("type-mismatch", expr.args[0].span, extra={"msg": "First argument must be an array"}))
+                    return ERROR_TYPE, diags
+                    
+                fn_name = expr.args[1].name if isinstance(expr.args[1], VarRef) else None
+                fn_def = ctx.lookup_fn(fn_name) if fn_name else None
+                if not fn_def:
+                    diags.append(Diagnostic("type-mismatch", expr.args[1].span, extra={"msg": "Second argument must be a function name"}))
+                    return ERROR_TYPE, diags
+                    
+                result_elements = []
+                result_deps = set(arr_t.deps)
+                for el in arr_t.dist:
+                    call_ctx = TypeContext(parent=ctx)
+                    call_ctx.bind(fn_def.args[0].name, el)
+                    
+                    try:
+                        for s in fn_def.body.stmts:
+                            diags.extend(check_stmt(s, call_ctx))
+                        diags.append(Diagnostic("type-mismatch", expr.span, extra={"msg": "Function did not return a value"}))
+                        return ERROR_TYPE, diags
+                    except ReturnException as r:
+                        diags.extend(r.diags)
+                        if expr.name == "map":
+                            result_elements.append(r.typ)
+                            result_deps.update(r.typ.deps)
+                        else: # filter
+                            if not math.isclose(r.typ.dist.stddev, 0.0, abs_tol=1e-9):
+                                diags.append(Diagnostic("uncertain-branch", expr.span, extra={"msg": "Filter condition must be deterministic"}))
+                                return ERROR_TYPE, diags
+                            if r.typ.dist.mean != 0.0:
+                                result_elements.append(el)
+                                
+                return MeasuredType(tuple(result_elements), frozenset(result_deps)), diags
+                
+            elif expr.name == "reduce" and len(expr.args) == 3:
+                arr_t, d1 = synth(expr.args[0], ctx)
+                diags.extend(d1)
+                if not isinstance(arr_t.dist, tuple):
+                    diags.append(Diagnostic("type-mismatch", expr.args[0].span, extra={"msg": "First argument must be an array"}))
+                    return ERROR_TYPE, diags
+                    
+                fn_name = expr.args[1].name if isinstance(expr.args[1], VarRef) else None
+                fn_def = ctx.lookup_fn(fn_name) if fn_name else None
+                if not fn_def or len(fn_def.args) != 2:
+                    diags.append(Diagnostic("type-mismatch", expr.args[1].span, extra={"msg": "Second argument must be a 2-argument function name"}))
+                    return ERROR_TYPE, diags
+                    
+                acc_t, d2 = synth(expr.args[2], ctx)
+                diags.extend(d2)
+                
+                for el in arr_t.dist:
+                    call_ctx = TypeContext(parent=ctx)
+                    call_ctx.bind(fn_def.args[0].name, acc_t)
+                    call_ctx.bind(fn_def.args[1].name, el)
+                    
+                    try:
+                        for s in fn_def.body.stmts:
+                            diags.extend(check_stmt(s, call_ctx))
+                        diags.append(Diagnostic("type-mismatch", expr.span, extra={"msg": "Function did not return a value"}))
+                        return ERROR_TYPE, diags
+                    except ReturnException as r:
+                        diags.extend(r.diags)
+                        acc_t = r.typ
+                        
+                return acc_t, diags
+                
+            fn_def = ctx.lookup_fn(expr.name)
+            if fn_def:
+                if len(expr.args) != len(fn_def.args):
+                    return ERROR_TYPE, diags + [Diagnostic("type-mismatch", expr.span, extra={"msg": f"Argument count mismatch: expected {len(fn_def.args)}, got {len(expr.args)}"})]
+                
+                call_ctx = TypeContext(parent=ctx)
+                for arg_def, arg_expr in zip(fn_def.args, expr.args):
+                    arg_typ, d = synth(arg_expr, ctx)
+                    diags.extend(d)
+                    call_ctx.bind(arg_def.name, arg_typ)
+                    
+                try:
+                    for s in fn_def.body.stmts:
+                        diags.extend(check_stmt(s, call_ctx))
+                    return ERROR_TYPE, diags + [Diagnostic("type-mismatch", expr.span, extra={"msg": "Function did not return a value"})]
+                except ReturnException as r:
+                    diags.extend(r.diags)
+                    return r.typ, diags
+                    
+            return ERROR_TYPE, diags + [Diagnostic("type-mismatch", expr.span, extra={"msg": f"Unknown function: {expr.name}"})]
         except NotConstantError as e:
             return ERROR_TYPE, [Diagnostic("type-mismatch", expr.span, extra={"msg": str(e)})]
 
@@ -204,6 +343,67 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
         return ERROR_TYPE, diags
 
     return ERROR_TYPE, []
+
+def try_optimize_for_loop(stmt: ForStmt, ctx: TypeContext) -> tuple[bool, list[Diagnostic]]:
+    # A simple heuristic: if the body only modifies one variable that is added to monotonically, unroll the math analytically instead
+    if not isinstance(stmt.init, LetStmt) and not isinstance(stmt.init, VarStmt) and not isinstance(stmt.init, AssignStmt):
+        return False, []
+        
+    loop_var = stmt.init.name
+    if not isinstance(stmt.condition, BinOp) or stmt.condition.op != "<":
+        return False, []
+    if not isinstance(stmt.condition.left, VarRef) or stmt.condition.left.name != loop_var:
+        return False, []
+    if not isinstance(stmt.condition.right, NumberLit):
+        return False, []
+        
+    max_iters = int(stmt.condition.right.value)
+    
+    if not isinstance(stmt.increment, AssignStmt) or stmt.increment.name != loop_var:
+        return False, []
+    if not isinstance(stmt.increment.value, BinOp) or stmt.increment.value.op != "+":
+        return False, []
+    if not isinstance(stmt.increment.value.left, VarRef) or stmt.increment.value.left.name != loop_var:
+        return False, []
+    if not isinstance(stmt.increment.value.right, NumberLit) or stmt.increment.value.right.value != 1.0:
+        return False, []
+        
+    if len(stmt.body.stmts) != 1:
+        return False, []
+    
+    body_stmt = stmt.body.stmts[0]
+    if not isinstance(body_stmt, AssignStmt):
+        return False, []
+        
+    if not isinstance(body_stmt.value, BinOp) or body_stmt.value.op != "+":
+        return False, []
+        
+    # Check if a = a + expr
+    left_is_a = isinstance(body_stmt.value.left, VarRef) and body_stmt.value.left.name == body_stmt.name
+    right_is_a = isinstance(body_stmt.value.right, VarRef) and body_stmt.value.right.name == body_stmt.name
+    
+    if not (left_is_a or right_is_a):
+        return False, []
+        
+    addend = body_stmt.value.right if left_is_a else body_stmt.value.left
+    addend_typ, diags = synth(addend, ctx)
+    
+    # Do init
+    diags.extend(check_stmt(stmt.init, ctx))
+    
+    # Now we want to analytically add `addend` `max_iters` times to `a`
+    # However, since `+` tracks correlation, we can just do a simple loop but short-circuited mathematically
+    # But since it's just `addend`, if addend is uncorrelated with `a`, we just add them.
+    # To keep it perfectly identical to unrolling without the Python overhead:
+    # We can just run the loop body manually in python without synthesizing the condition/increment repeatedly.
+    target_var = body_stmt.name
+    for _ in range(max_iters):
+        diags.extend(check_stmt(body_stmt, ctx))
+        
+    from uncertain.distributions import Dist
+    ctx.bind(loop_var, MeasuredType(Dist(float(max_iters), 0.0), frozenset()))
+        
+    return True, diags
 
 def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
     if isinstance(stmt, (LetStmt, VarStmt)):
@@ -306,7 +506,9 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
                     if not (math.isclose(inferred.dist.mean, exp_val, rel_tol=1e-3, abs_tol=1e-3) and math.isclose(inferred.dist.stddev, 0.0, rel_tol=1e-3, abs_tol=1e-3)):
                         diags.append(Diagnostic("type-mismatch", stmt.span))
         
-        if inferred.dist.stddev > 0 and not inferred.deps:
+        if isinstance(inferred.dist, tuple):
+            final_deps = inferred.deps
+        elif inferred.dist.stddev > 0 and not inferred.deps:
             final_deps = frozenset({stmt.name})
         else:
             final_deps = inferred.deps
@@ -319,7 +521,9 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
         if not typ:
             return [Diagnostic("undefined-var", stmt.span, extra={"name": stmt.name})]
         inferred, diags = synth(stmt.value, ctx)
-        if inferred.dist.stddev > 0 and not inferred.deps:
+        if isinstance(inferred.dist, tuple):
+            final_deps = inferred.deps
+        elif inferred.dist.stddev > 0 and not inferred.deps:
             final_deps = frozenset({stmt.name})
         else:
             final_deps = inferred.deps
@@ -354,6 +558,10 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
         return diags
         
     elif isinstance(stmt, ForStmt):
+        opt_success, opt_diags = try_optimize_for_loop(stmt, ctx)
+        if opt_success:
+            return opt_diags
+            
         diags = []
         diags.extend(check_stmt(stmt.init, ctx))
         iters = 0
@@ -370,5 +578,13 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
                 diags.append(Diagnostic("uncertain-branch", stmt.span, extra={"msg": "Loop iteration limit exceeded (1000)"}))
                 break
         return diags
+        
+    elif isinstance(stmt, FnDefStmt):
+        ctx.functions[stmt.name] = stmt
+        return []
+        
+    elif isinstance(stmt, ReturnStmt):
+        typ, diags = synth(stmt.value, ctx)
+        raise ReturnException(typ, diags)
         
     return []

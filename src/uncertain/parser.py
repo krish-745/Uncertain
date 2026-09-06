@@ -42,7 +42,7 @@ class Parser:
     def parse_program(self) -> tuple[List[Stmt], Optional[Expr]]:
         stmts = []
         while self.current():
-            if self.current().type in ("LET", "VAR", "WHILE", "IF", "FOR"):
+            if self.current().type in ("LET", "VAR", "WHILE", "IF", "FOR", "FN", "RETURN"):
                 stmts.append(self.parse_statement())
             elif self.current().type == "IDENT" and self.pos + 1 < len(self.tokens) and self.tokens[self.pos+1].type == "EQUALS":
                 stmts.append(self.parse_statement())
@@ -70,6 +70,10 @@ class Parser:
             return self.parse_if_stmt()
         elif tok.type == "FOR":
             return self.parse_for_stmt()
+        elif tok.type == "FN":
+            return self.parse_fn_def()
+        elif tok.type == "RETURN":
+            return self.parse_return_stmt(require_semi)
         elif tok.type == "IDENT":
             return self.parse_assign_stmt(require_semi)
         raise ParseError("Expected statement", tok.line, tok.col)
@@ -165,6 +169,46 @@ class Parser:
         length = (self.tokens[self.pos-1].col + 1) - start_tok.col
         span = Span(start_tok.line, start_tok.col, length)
         return ForStmt(init, condition, increment, body, span)
+
+    def parse_fn_def(self) -> FnDefStmt:
+        start_tok = self.expect("FN", "Expected 'fn'")
+        name_tok = self.expect("IDENT", "Expected function name")
+        
+        self.expect("LPAREN", "Expected '(' after function name")
+        args = []
+        if not self.match("RPAREN"):
+            while True:
+                arg_name_tok = self.expect("IDENT", "Expected argument name")
+                arg_type = None
+                if self.match("COLON"):
+                    arg_type = self.parse_type_ann()
+                arg_len = (self.tokens[self.pos-1].col + len(self.tokens[self.pos-1].value)) - arg_name_tok.col
+                arg_span = Span(arg_name_tok.line, arg_name_tok.col, arg_len)
+                args.append(ArgDef(arg_name_tok.value, arg_type, arg_span))
+                
+                if not self.match("COMMA"):
+                    break
+            self.expect("RPAREN", "Expected ')' after arguments")
+            
+        return_type = None
+        if self.match("ARROW"):
+            return_type = self.parse_type_ann()
+            
+        body = self.parse_block()
+        
+        length = (self.tokens[self.pos-1].col + 1) - start_tok.col
+        span = Span(start_tok.line, start_tok.col, length)
+        return FnDefStmt(name_tok.value, args, return_type, body, span)
+
+    def parse_return_stmt(self, require_semi: bool = True) -> ReturnStmt:
+        start_tok = self.expect("RETURN", "Expected 'return'")
+        value = self.parse_expression()
+        if require_semi:
+            self.expect("SEMI", "Expected ';' after return value")
+        
+        length = (self.tokens[self.pos-1].col + 1) - start_tok.col
+        span = Span(start_tok.line, start_tok.col, length)
+        return ReturnStmt(value, span)
 
     def parse_block(self) -> Block:
         start_tok = self.expect("LBRACE", "Expected '{'")
@@ -330,11 +374,12 @@ class Parser:
         if not tok:
             raise ParseError("Unexpected EOF", -1, -1)
             
+        node = None
         if tok.type == "NUMBER":
             self.advance()
-            return NumberLit(float(tok.value), Span(tok.line, tok.col, len(tok.value)))
+            node = NumberLit(float(tok.value), Span(tok.line, tok.col, len(tok.value)))
             
-        if tok.type == "IDENT":
+        elif tok.type == "IDENT":
             self.advance()
             if self.match("LPAREN"):
                 args = []
@@ -360,17 +405,16 @@ class Parser:
                     end_tok = self.tokens[self.pos-1]
                     
                 length = (end_tok.col + len(end_tok.value)) - tok.col
-                return Call(tok.value, args, kwargs, Span(tok.line, tok.col, length))
+                node = Call(tok.value, args, kwargs, Span(tok.line, tok.col, length))
             else:
-                return VarRef(tok.value, Span(tok.line, tok.col, len(tok.value)))
+                node = VarRef(tok.value, Span(tok.line, tok.col, len(tok.value)))
                 
-        if tok.type == "LPAREN":
+        elif tok.type == "LPAREN":
             self.advance()
-            expr = self.parse_expression()
+            node = self.parse_expression()
             self.expect("RPAREN", "Expected ')'")
-            return expr
             
-        if tok.type == "LBRACKET":
+        elif tok.type == "LBRACKET":
             self.advance()
             elements = []
             if not self.match("RBRACKET"):
@@ -382,9 +426,19 @@ class Parser:
             else:
                 end_tok = self.tokens[self.pos-1]
             length = (end_tok.col + len(end_tok.value)) - tok.col
-            return ArrayLit(elements, Span(tok.line, tok.col, length))
+            node = ArrayLit(elements, Span(tok.line, tok.col, length))
             
-        raise ParseError(f"Unexpected token {tok.value!r}", tok.line, tok.col)
+        else:
+            raise ParseError(f"Unexpected token {tok.value!r}", tok.line, tok.col)
+
+        while self.current() and self.current().type == "LBRACKET":
+            self.advance()
+            index = self.parse_expression()
+            end_tok = self.expect("RBRACKET", "Expected ']'")
+            length = (end_tok.col + len(end_tok.value)) - node.span.col
+            node = ArrayAccess(node, index, Span(node.span.line, node.span.col, length))
+            
+        return node
 
 def parse(source: str) -> tuple[List[Stmt], Optional[Expr]]:
     tokens = tokenize(source)

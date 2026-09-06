@@ -138,5 +138,30 @@ class ArrayLit:
     elements: list["Expr"]
     span: Span
 
-Stmt = Union[LetStmt, VarStmt, AssignStmt, WhileStmt, IfStmt, ForStmt]
-Expr = Union[NumberLit, VarRef, BinOp, Call, ArrayLit]
+@dataclass
+class ArgDef:
+    name: str
+    type_ann: DistLit | None
+    span: Span
+
+@dataclass
+class FnDefStmt:
+    name: str
+    args: list[ArgDef]
+    return_type: DistLit | None
+    body: Block
+    span: Span
+
+@dataclass
+class ReturnStmt:
+    value: "Expr"
+    span: Span
+
+@dataclass
+class ArrayAccess:
+    array: "Expr"
+    index: "Expr"
+    span: Span
+
+Stmt = Union[LetStmt, VarStmt, AssignStmt, WhileStmt, IfStmt, ForStmt, FnDefStmt, ReturnStmt]
+Expr = Union[NumberLit, VarRef, BinOp, Call, ArrayLit, ArrayAccess]

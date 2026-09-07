@@ -116,7 +116,7 @@ warning: approximation-warning
 ---
 
 ## `uncertain-branch`
-**Description:** Emitted when attempting to use a probability distribution (uncertain variable) as the condition for an `if` statement or loop, or when a loop exceeds the maximum compile-time unrolling limit (1000 iterations). Branching logic must be deterministic.
+**Description:** Emitted when attempting to use a probability distribution (uncertain variable) as the condition for an `if` statement or loop, or when a loop exceeds the maximum compile-time unrolling limit (default 1000 iterations, override via `--max-unroll`). Branching logic must be deterministic.
 
 **Example:**
 ```calc

@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--check-only", action="store_true", help="Only run the type checker")
     parser.add_argument("--output", choices=["text", "json"], default="text", help="Output format")
     parser.add_argument("--explain", type=str, help="Explain an error code")
+    parser.add_argument("--max-unroll", type=int, default=1000, help="Maximum number of loop iterations to unroll (default 1000)")
     parser.add_argument("--lsp", action="store_true", help="Start the Language Server Protocol server")
     
     args = parser.parse_args()
@@ -62,7 +63,7 @@ def main():
             print(e)
         sys.exit(1)
         
-    ctx = TypeContext()
+    ctx = TypeContext(max_unroll=args.max_unroll)
     all_diags = []
     
     for stmt in stmts:

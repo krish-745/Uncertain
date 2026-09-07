@@ -40,6 +40,16 @@ def exp_dist(a: Dist) -> Dist:
     mean = math.exp(a.mean)
     return Dist(mean, a.stddev * mean)
 
+def sin_dist(a: Dist) -> Dist:
+    mean = math.sin(a.mean)
+    stddev = abs(math.cos(a.mean)) * a.stddev
+    return Dist(mean, stddev)
+
+def cos_dist(a: Dist) -> Dist:
+    mean = math.cos(a.mean)
+    stddev = abs(math.sin(a.mean)) * a.stddev
+    return Dist(mean, stddev)
+
 def pow_const(a: Dist, n: int) -> Dist:
     if n == 2:
         return square(a)

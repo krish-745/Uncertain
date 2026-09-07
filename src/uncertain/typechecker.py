@@ -4,7 +4,7 @@ from typing import Tuple, List, Optional
 from uncertain.ast_nodes import *
 from uncertain.distributions import (
     Dist, add, sub, mul_independent, div_independent, square, sqrt_dist, correlated_product,
-    abs_dist, log_dist, exp_dist, pow_const,
+    abs_dist, log_dist, exp_dist, sin_dist, cos_dist, pow_const,
     MathDomainError
 )
 from uncertain.diagnostics import Diagnostic
@@ -18,10 +18,11 @@ class MeasuredType:
 ERROR_TYPE = MeasuredType(Dist(0.0, 0.0), frozenset())
 
 class TypeContext:
-    def __init__(self, parent: "TypeContext" = None):
+    def __init__(self, parent: "TypeContext" = None, max_unroll: int = 1000):
         self.bindings: dict[str, MeasuredType] = {}
         self.functions: dict[str, FnDefStmt] = {}
         self.parent = parent
+        self.max_unroll = parent.max_unroll if parent else max_unroll
 
     def lookup(self, name: str) -> Optional[MeasuredType]:
         if name in self.bindings:
@@ -176,6 +177,14 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
             elif expr.name == "exp" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
                 return MeasuredType(exp_dist(at.dist), at.deps), ad + diags
+
+            elif expr.name == "sin" and len(expr.args) == 1:
+                at, ad = synth(expr.args[0], ctx)
+                return MeasuredType(sin_dist(at.dist), at.deps), ad + diags
+
+            elif expr.name == "cos" and len(expr.args) == 1:
+                at, ad = synth(expr.args[0], ctx)
+                return MeasuredType(cos_dist(at.dist), at.deps), ad + diags
 
             elif expr.name == "pow" and len(expr.args) == 2:
                 at, ad = synth(expr.args[0], ctx)
@@ -510,6 +519,8 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
             final_deps = inferred.deps
         elif inferred.dist.stddev > 0 and not inferred.deps:
             final_deps = frozenset({stmt.name})
+        elif inferred.dist.stddev > 0:
+            final_deps = inferred.deps | frozenset({stmt.name})
         else:
             final_deps = inferred.deps
             
@@ -525,6 +536,8 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
             final_deps = inferred.deps
         elif inferred.dist.stddev > 0 and not inferred.deps:
             final_deps = frozenset({stmt.name})
+        elif inferred.dist.stddev > 0:
+            final_deps = inferred.deps | frozenset({stmt.name})
         else:
             final_deps = inferred.deps
             
@@ -542,8 +555,8 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
             for s in stmt.body.stmts:
                 diags.extend(check_stmt(s, ctx))
             iters += 1
-            if iters > 1000:
-                diags.append(Diagnostic("uncertain-branch", stmt.span, extra={"msg": "Loop iteration limit exceeded (1000)"}))
+            if iters > ctx.max_unroll:
+                diags.append(Diagnostic("uncertain-branch", stmt.span, extra={"msg": f"Loop iteration limit exceeded ({ctx.max_unroll})"}))
                 break
         return diags
         
@@ -574,8 +587,8 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
                 diags.extend(check_stmt(s, ctx))
             diags.extend(check_stmt(stmt.increment, ctx))
             iters += 1
-            if iters > 1000:
-                diags.append(Diagnostic("uncertain-branch", stmt.span, extra={"msg": "Loop iteration limit exceeded (1000)"}))
+            if iters > ctx.max_unroll:
+                diags.append(Diagnostic("uncertain-branch", stmt.span, extra={"msg": f"Loop iteration limit exceeded ({ctx.max_unroll})"}))
                 break
         return diags
         

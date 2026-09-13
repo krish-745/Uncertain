@@ -44,8 +44,13 @@ class Parser:
         while self.current():
             if self.current().type in ("LET", "VAR", "WHILE", "IF", "FOR", "FN", "RETURN"):
                 stmts.append(self.parse_statement())
-            elif self.current().type == "IDENT" and self.pos + 1 < len(self.tokens) and self.tokens[self.pos+1].type == "EQUALS":
-                stmts.append(self.parse_statement())
+            elif self.current().type == "IDENT":
+                if self.pos + 1 < len(self.tokens) and self.tokens[self.pos+1].type == "EQUALS":
+                    stmts.append(self.parse_statement())
+                elif self.current().value == "import":
+                    stmts.append(self.parse_statement())
+                else:
+                    break
             else:
                 break
         
@@ -75,8 +80,26 @@ class Parser:
         elif tok.type == "RETURN":
             return self.parse_return_stmt(require_semi)
         elif tok.type == "IDENT":
+            if tok.value == "import":
+                return self.parse_import_stmt(require_semi)
             return self.parse_assign_stmt(require_semi)
         raise ParseError("Expected statement", tok.line, tok.col)
+
+    def parse_import_stmt(self, require_semi: bool = True) -> ImportStmt:
+        start_tok = self.expect("IDENT", "Expected 'import'")
+        path = [self.expect("IDENT", "Expected module name").value]
+        while self.match("DOT"):
+            path.append(self.expect("IDENT", "Expected sub-module name").value)
+            
+        as_tok = self.expect("IDENT", "Expected 'as'")
+        if as_tok.value != "as":
+            raise ParseError(f"Expected 'as', got '{as_tok.value}'", as_tok.line, as_tok.col)
+            
+        alias = self.expect("IDENT", "Expected alias name").value
+        if require_semi:
+            self.expect("SEMI", "Expected ';' after import statement")
+            
+        return ImportStmt(path, alias, Span(start_tok.line, start_tok.col, 0))
 
     def parse_let_stmt(self, require_semi: bool = True) -> LetStmt:
         start_tok = self.expect("LET", "Expected 'let'")
@@ -428,15 +451,42 @@ class Parser:
             length = (end_tok.col + len(end_tok.value)) - tok.col
             node = ArrayLit(elements, Span(tok.line, tok.col, length))
             
+        elif tok.type == "LBRACE":
+            self.advance()
+            fields = {}
+            if not self.match("RBRACE"):
+                while True:
+                    if not self.current() or self.current().type != "IDENT":
+                        raise ParseError("Expected field name in struct literal", self.current().line if self.current() else -1, self.current().col if self.current() else -1)
+                    name_tok = self.advance()
+                    self.expect("COLON", "Expected ':' after field name")
+                    val = self.parse_expression()
+                    fields[name_tok.value] = val
+                    if not self.match("COMMA"):
+                        break
+                end_tok = self.expect("RBRACE", "Expected '}'")
+            else:
+                end_tok = self.tokens[self.pos-1]
+            length = (end_tok.col + len(end_tok.value)) - tok.col
+            node = StructLit(fields, Span(tok.line, tok.col, length))
+            
         else:
             raise ParseError(f"Unexpected token {tok.value!r}", tok.line, tok.col)
 
-        while self.current() and self.current().type == "LBRACKET":
-            self.advance()
-            index = self.parse_expression()
-            end_tok = self.expect("RBRACKET", "Expected ']'")
-            length = (end_tok.col + len(end_tok.value)) - node.span.col
-            node = ArrayAccess(node, index, Span(node.span.line, node.span.col, length))
+        while self.current() and self.current().type in ("LBRACKET", "DOT"):
+            if self.current().type == "LBRACKET":
+                self.advance()
+                index = self.parse_expression()
+                end_tok = self.expect("RBRACKET", "Expected ']'")
+                length = (end_tok.col + len(end_tok.value)) - node.span.col
+                node = ArrayAccess(node, index, Span(node.span.line, node.span.col, length))
+            elif self.current().type == "DOT":
+                self.advance()
+                if not self.current() or self.current().type != "IDENT":
+                    raise ParseError("Expected field name after '.'", self.current().line if self.current() else -1, self.current().col if self.current() else -1)
+                name_tok = self.advance()
+                length = (name_tok.col + len(name_tok.value)) - node.span.col
+                node = FieldAccess(node, name_tok.value, Span(node.span.line, node.span.col, length))
             
         return node
 

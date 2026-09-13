@@ -8,21 +8,33 @@ from uncertain.distributions import (
     MathDomainError
 )
 from uncertain.diagnostics import Diagnostic
-from uncertain.dependency import check_reuse, DepSet
+from uncertain.dependency import check_reuse, AffineForm, get_cov, get_var, linear_comb_affine, scale_affine
 
 @dataclass(frozen=True)
 class MeasuredType:
-    dist: Dist | tuple["MeasuredType", ...]
-    deps: DepSet
+    dist: Dist | tuple["MeasuredType", ...] | dict[str, "MeasuredType"]
+    deps: AffineForm
 
-ERROR_TYPE = MeasuredType(Dist(0.0, 0.0), frozenset())
+ERROR_TYPE = MeasuredType(Dist(0.0, 0.0), {})
+
+import os
 
 class TypeContext:
-    def __init__(self, parent: "TypeContext" = None, max_unroll: int = 1000):
+    def __init__(self, parent: "TypeContext" = None, max_unroll: int = 1000, base_dir: str = "."):
         self.bindings: dict[str, MeasuredType] = {}
         self.functions: dict[str, FnDefStmt] = {}
         self.parent = parent
         self.max_unroll = parent.max_unroll if parent else max_unroll
+        self.base_dir = parent.base_dir if parent else base_dir
+        self.next_id = 1
+
+    def get_next_id(self) -> int:
+        if self.parent:
+            return self.parent.get_next_id()
+        else:
+            id = self.next_id
+            self.next_id += 1
+            return id
 
     def lookup(self, name: str) -> Optional[MeasuredType]:
         if name in self.bindings:
@@ -63,9 +75,16 @@ def eval_const(expr: Expr) -> float:
             return eval_const(expr.left) / eval_const(expr.right)
     raise NotConstantError("Expected a constant numeric expression")
 
+def create_measured(dist: Dist, base_deps: AffineForm, var_affine: float, ctx: TypeContext) -> MeasuredType:
+    deps = dict(base_deps)
+    var_exact = dist.stddev ** 2
+    if var_exact > var_affine + 1e-12:
+        deps[ctx.get_next_id()] = math.sqrt(var_exact - var_affine)
+    return MeasuredType(dist, deps)
+
 def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]:
     if isinstance(expr, NumberLit):
-        return MeasuredType(Dist(expr.value, 0.0), frozenset()), []
+        return MeasuredType(Dist(expr.value, 0.0), {}), []
         
     elif isinstance(expr, VarRef):
         typ = ctx.lookup(expr.name)
@@ -77,13 +96,20 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
     elif isinstance(expr, ArrayLit):
         diags = []
         elements = []
-        deps = set()
         for el in expr.elements:
             t, d = synth(el, ctx)
             diags.extend(d)
             elements.append(t)
-            deps.update(t.deps)
-        return MeasuredType(tuple(elements), frozenset(deps)), diags
+        return MeasuredType(tuple(elements), {}), diags
+        
+    elif isinstance(expr, StructLit):
+        diags = []
+        fields = {}
+        for name, el in expr.fields.items():
+            t, d = synth(el, ctx)
+            diags.extend(d)
+            fields[name] = t
+        return MeasuredType(fields, {}), diags
 
     elif isinstance(expr, ArrayAccess):
         arr_t, diags = synth(expr.array, ctx)
@@ -110,18 +136,32 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
             diags.append(Diagnostic("math-domain-error", expr.index.span, extra={"msg": str(e)}))
             return ERROR_TYPE, diags
             
+    elif isinstance(expr, FieldAccess):
+        obj_t, diags = synth(expr.obj, ctx)
+        if not isinstance(obj_t.dist, dict):
+            diags.append(Diagnostic("type-mismatch", expr.span, extra={"msg": "Cannot access field of a non-struct"}))
+            return ERROR_TYPE, diags
+        if expr.field not in obj_t.dist:
+            diags.append(Diagnostic("type-mismatch", expr.span, extra={"msg": f"Struct has no field '{expr.field}'"}))
+            return ERROR_TYPE, diags
+        return obj_t.dist[expr.field], diags
+            
     elif isinstance(expr, BinOp):
         lt, ld = synth(expr.left, ctx)
         rt, rd = synth(expr.right, ctx)
         diags = ld + rd
         
         non_normal_families = ("Uniform", "Empirical", "LogNormal", "Poisson", "Binomial", "Gamma", "Bernoulli", "NegativeBinomial", "Geometric", "Exponential")
-        if lt.dist.family in non_normal_families or rt.dist.family in non_normal_families:
-            diags.append(Diagnostic("approximation-warning", expr.span, extra={"msg": "Moment-matching approximation used for non-Normal distribution"}, severity="warning"))
+        if not isinstance(lt.dist, tuple) and not isinstance(rt.dist, tuple):
+            if lt.dist.family in non_normal_families or rt.dist.family in non_normal_families:
+                diags.append(Diagnostic("approximation-warning", expr.span, extra={"msg": "Moment-matching approximation used for non-Normal distribution"}, severity="warning"))
 
         if expr.op in ("+", "-"):
-            fn = add if expr.op == "+" else sub
-            return MeasuredType(fn(lt.dist, rt.dist), lt.deps | rt.deps), diags
+            scale_r = 1.0 if expr.op == "+" else -1.0
+            mean = lt.dist.mean + scale_r * rt.dist.mean
+            affine = linear_comb_affine(lt.deps, 1.0, rt.deps, scale_r)
+            dist_res = Dist(mean, math.sqrt(get_var(affine)))
+            return create_measured(dist_res, affine, get_var(affine), ctx), diags
             
         elif expr.op in ("<", ">"):
             if math.isclose(lt.dist.stddev, 0.0, abs_tol=1e-9) and math.isclose(rt.dist.stddev, 0.0, abs_tol=1e-9):
@@ -129,82 +169,145 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
                     res = 1.0 if lt.dist.mean < rt.dist.mean else 0.0
                 else:
                     res = 1.0 if lt.dist.mean > rt.dist.mean else 0.0
-                return MeasuredType(Dist(res, 0.0), lt.deps | rt.deps), diags
+                return MeasuredType(Dist(res, 0.0), {}), diags
             else:
                 diags.append(Diagnostic("uncertain-branch", expr.span, extra={"msg": "Cannot branch on a non-deterministic condition"}))
                 return ERROR_TYPE, diags
 
         elif expr.op in ("*", "/"):
-            diag = check_reuse(expr.op, lt.deps, rt.deps, expr.span)
-            if diag:
-                diags.append(diag)
-                return ERROR_TYPE, diags
-            fn = mul_independent if expr.op == "*" else div_independent
             try:
-                res = fn(lt.dist, rt.dist)
+                if expr.op == "*":
+                    cov = get_cov(lt.deps, rt.deps)
+                    mean = lt.dist.mean * rt.dist.mean
+                    # Exact variance formula for product of two normals:
+                    var_exact = (lt.dist.mean**2) * (rt.dist.stddev**2) + (rt.dist.mean**2) * (lt.dist.stddev**2) + 2 * lt.dist.mean * rt.dist.mean * cov + (lt.dist.stddev**2) * (rt.dist.stddev**2) + cov**2
+                    
+                    affine = linear_comb_affine(lt.deps, rt.dist.mean, rt.deps, lt.dist.mean)
+                    dist_res = Dist(mean, math.sqrt(max(0.0, var_exact)))
+                    return create_measured(dist_res, affine, get_var(affine), ctx), diags
+                else: # "/"
+                    if rt.dist.mean == 0:
+                        raise MathDomainError("cannot divide by a distribution with a zero mean")
+                    mean = lt.dist.mean / rt.dist.mean
+                    # Delta method affine
+                    affine = linear_comb_affine(lt.deps, 1.0 / rt.dist.mean, rt.deps, -lt.dist.mean / (rt.dist.mean**2))
+                    var_affine = get_var(affine)
+                    # For division, we use Delta method variance since exact is complex/infinite
+                    dist_res = Dist(mean, math.sqrt(max(0.0, var_affine)))
+                    return create_measured(dist_res, affine, var_affine, ctx), diags
             except MathDomainError as e:
                 diags.append(Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)}))
                 return ERROR_TYPE, diags
-            return MeasuredType(res, lt.deps | rt.deps), diags
             
     elif isinstance(expr, Call):
         diags = []
+        
+        if expr.name == "prob":
+            if len(expr.args) != 1 or not isinstance(expr.args[0], BinOp) or expr.args[0].op not in ("<", ">", "<=", ">="):
+                diags.append(Diagnostic("type-mismatch", expr.span, extra={"msg": "prob() requires a comparison expression (e.g. X > 5)"}))
+                return ERROR_TYPE, diags
+            
+            cmp = expr.args[0]
+            lt, ld = synth(cmp.left, ctx)
+            rt, rd = synth(cmp.right, ctx)
+            diags.extend(ld + rd)
+            
+            # Evaluate X - Y
+            scale_r = -1.0
+            mean = lt.dist.mean - rt.dist.mean
+            affine = linear_comb_affine(lt.deps, 1.0, rt.deps, -1.0)
+            stddev = math.sqrt(get_var(affine))
+            
+            if math.isclose(stddev, 0.0, abs_tol=1e-9):
+                if cmp.op in ("<", "<="):
+                    p = 1.0 if mean < 0 else 0.0
+                else:
+                    p = 1.0 if mean > 0 else 0.0
+                return MeasuredType(Dist(p, 0.0), {}), diags
+                
+            # Assume normal approximation for the difference
+            z = (0.0 - mean) / stddev
+            cdf_0 = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+            
+            if cmp.op in ("<", "<="):
+                p = cdf_0
+            else:
+                p = 1.0 - cdf_0
+                
+            return MeasuredType(Dist(p, 0.0, "Exact"), {}), diags
+            
         try:
             if expr.name == "square" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
-                return MeasuredType(square(at.dist), at.deps), ad + diags
+                dist_res = square(at.dist)
+                affine = scale_affine(at.deps, 2.0 * at.dist.mean)
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
                 
             elif expr.name == "sqrt" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
                 try:
-                    res = sqrt_dist(at.dist)
+                    dist_res = sqrt_dist(at.dist)
+                    affine = scale_affine(at.deps, 1.0 / (2.0 * math.sqrt(at.dist.mean)) if at.dist.mean > 0 else 0.0)
                 except MathDomainError as e:
                     return ERROR_TYPE, ad + diags + [Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)})]
-                return MeasuredType(res, at.deps), ad + diags
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
 
             elif expr.name == "abs" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
-                return MeasuredType(abs_dist(at.dist), at.deps), ad + diags
+                dist_res = abs_dist(at.dist)
+                affine = scale_affine(at.deps, 1.0 if at.dist.mean >= 0 else -1.0)
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
 
             elif expr.name == "log" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
                 try:
-                    res = log_dist(at.dist)
+                    dist_res = log_dist(at.dist)
+                    affine = scale_affine(at.deps, 1.0 / at.dist.mean)
                 except MathDomainError as e:
                     return ERROR_TYPE, ad + diags + [Diagnostic("math-domain-error", expr.span, extra={"msg": str(e)})]
-                return MeasuredType(res, at.deps), ad + diags
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
 
             elif expr.name == "exp" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
-                return MeasuredType(exp_dist(at.dist), at.deps), ad + diags
+                dist_res = exp_dist(at.dist)
+                affine = scale_affine(at.deps, math.exp(at.dist.mean))
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
 
             elif expr.name == "sin" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
-                return MeasuredType(sin_dist(at.dist), at.deps), ad + diags
+                dist_res = sin_dist(at.dist)
+                affine = scale_affine(at.deps, math.cos(at.dist.mean))
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
 
             elif expr.name == "cos" and len(expr.args) == 1:
                 at, ad = synth(expr.args[0], ctx)
-                return MeasuredType(cos_dist(at.dist), at.deps), ad + diags
+                dist_res = cos_dist(at.dist)
+                affine = scale_affine(at.deps, -math.sin(at.dist.mean))
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
 
             elif expr.name == "pow" and len(expr.args) == 2:
                 at, ad = synth(expr.args[0], ctx)
                 n_val = eval_const(expr.args[1])
                 if not n_val.is_integer():
                     raise NotConstantError("Exponent must be an integer constant")
-                return MeasuredType(pow_const(at.dist, int(n_val)), at.deps), ad + diags
+                dist_res = pow_const(at.dist, int(n_val))
+                affine = scale_affine(at.deps, n_val * (at.dist.mean ** (n_val - 1)))
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + diags
                 
             elif expr.name == "correlated" and len(expr.args) >= 2:
                 at, ad = synth(expr.args[0], ctx)
                 bt, bd = synth(expr.args[1], ctx)
                 cov_expr = expr.kwargs.get("cov", NumberLit(0.0, expr.span))
                 cov = eval_const(cov_expr)
-                return MeasuredType(correlated_product(at.dist, bt.dist, cov), at.deps | bt.deps), ad + bd + diags
+                dist_res = correlated_product(at.dist, bt.dist, cov)
+                affine = linear_comb_affine(at.deps, bt.dist.mean, bt.deps, at.dist.mean)
+                return create_measured(dist_res, affine, get_var(affine), ctx), ad + bd + diags
                 
             elif expr.name == "sensor_read":
-                return MeasuredType(Dist(10.0, 1.0), frozenset()), diags
+                return create_measured(Dist(10.0, 1.0), {}, 0.0, ctx), diags
                 
             elif expr.name == "uniform_read":
-                return MeasuredType(Dist(5.0, 2.8867, "Uniform"), frozenset()), diags
+                return create_measured(Dist(5.0, 2.8867, "Uniform"), {}, 0.0, ctx), diags
                 
             elif expr.name == "empirical_read" and len(expr.args) == 1:
                 if isinstance(expr.args[0], ArrayLit):
@@ -215,41 +318,41 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
                     if vals:
                         mean = sum(vals) / len(vals)
                         stddev = math.sqrt(sum((v - mean)**2 for v in vals) / len(vals))
-                        return MeasuredType(Dist(mean, stddev, "Empirical"), frozenset()), diags
+                        return create_measured(Dist(mean, stddev, "Empirical"), {}, 0.0, ctx), diags
                 return ERROR_TYPE, diags
                 
             elif expr.name == "lognormal_read" and len(expr.args) == 2:
                 mu, sigma = eval_const(expr.args[0]), eval_const(expr.args[1])
                 m = math.exp(mu + (sigma**2) / 2.0)
                 s = math.sqrt((math.exp(sigma**2) - 1.0) * math.exp(2.0*mu + sigma**2))
-                return MeasuredType(Dist(m, s, "LogNormal"), frozenset()), diags
+                return create_measured(Dist(m, s, "LogNormal"), {}, 0.0, ctx), diags
             elif expr.name == "poisson_read" and len(expr.args) == 1:
                 lam = eval_const(expr.args[0])
-                return MeasuredType(Dist(lam, math.sqrt(lam) if lam >= 0 else 0.0, "Poisson"), frozenset()), diags
+                return create_measured(Dist(lam, math.sqrt(lam) if lam >= 0 else 0.0, "Poisson"), {}, 0.0, ctx), diags
             elif expr.name == "binomial_read" and len(expr.args) == 2:
                 n, p = eval_const(expr.args[0]), eval_const(expr.args[1])
-                return MeasuredType(Dist(n * p, math.sqrt(n * p * (1 - p)) if n > 0 and 0 <= p <= 1 else 0.0, "Binomial"), frozenset()), diags
+                return create_measured(Dist(n * p, math.sqrt(n * p * (1 - p)) if n > 0 and 0 <= p <= 1 else 0.0, "Binomial"), {}, 0.0, ctx), diags
             elif expr.name == "gamma_read" and len(expr.args) == 2:
                 k, theta = eval_const(expr.args[0]), eval_const(expr.args[1])
-                return MeasuredType(Dist(k * theta, math.sqrt(k * (theta**2)), "Gamma"), frozenset()), diags
+                return create_measured(Dist(k * theta, math.sqrt(k * (theta**2)), "Gamma"), {}, 0.0, ctx), diags
             elif expr.name == "bernoulli_read" and len(expr.args) == 1:
                 p = eval_const(expr.args[0])
-                return MeasuredType(Dist(p, math.sqrt(p * (1 - p)) if 0 <= p <= 1 else 0.0, "Bernoulli"), frozenset()), diags
+                return create_measured(Dist(p, math.sqrt(p * (1 - p)) if 0 <= p <= 1 else 0.0, "Bernoulli"), {}, 0.0, ctx), diags
             elif expr.name == "negbinom_read" and len(expr.args) == 2:
                 r, p = eval_const(expr.args[0]), eval_const(expr.args[1])
                 m = (p * r) / (1 - p) if p > 0 and p < 1 and r > 0 else 0.0
                 s = math.sqrt((p * r) / ((1 - p)**2)) if p > 0 and p < 1 and r > 0 else 0.0
-                return MeasuredType(Dist(m, s, "NegativeBinomial"), frozenset()), diags
+                return create_measured(Dist(m, s, "NegativeBinomial"), {}, 0.0, ctx), diags
             elif expr.name == "geometric_read" and len(expr.args) == 1:
                 p = eval_const(expr.args[0])
                 m = 1.0 / p if p > 0 and p <= 1 else 0.0
                 s = math.sqrt((1.0 - p) / (p**2)) if p > 0 and p <= 1 else 0.0
-                return MeasuredType(Dist(m, s, "Geometric"), frozenset()), diags
+                return create_measured(Dist(m, s, "Geometric"), {}, 0.0, ctx), diags
             elif expr.name == "exponential_read" and len(expr.args) == 1:
                 lam = eval_const(expr.args[0])
                 m = 1.0 / lam if lam > 0 else 0.0
                 s = math.sqrt(1.0 / (lam**2)) if lam > 0 else 0.0
-                return MeasuredType(Dist(m, s, "Exponential"), frozenset()), diags
+                return create_measured(Dist(m, s, "Exponential"), {}, 0.0, ctx), diags
                 
             elif expr.name in ("map", "filter") and len(expr.args) == 2:
                 arr_t, d1 = synth(expr.args[0], ctx)
@@ -265,7 +368,6 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
                     return ERROR_TYPE, diags
                     
                 result_elements = []
-                result_deps = set(arr_t.deps)
                 for el in arr_t.dist:
                     call_ctx = TypeContext(parent=ctx)
                     call_ctx.bind(fn_def.args[0].name, el)
@@ -279,7 +381,6 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
                         diags.extend(r.diags)
                         if expr.name == "map":
                             result_elements.append(r.typ)
-                            result_deps.update(r.typ.deps)
                         else: # filter
                             if not math.isclose(r.typ.dist.stddev, 0.0, abs_tol=1e-9):
                                 diags.append(Diagnostic("uncertain-branch", expr.span, extra={"msg": "Filter condition must be deterministic"}))
@@ -287,7 +388,7 @@ def synth(expr: Expr, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]
                             if r.typ.dist.mean != 0.0:
                                 result_elements.append(el)
                                 
-                return MeasuredType(tuple(result_elements), frozenset(result_deps)), diags
+                return MeasuredType(tuple(result_elements), {}), diags
                 
             elif expr.name == "reduce" and len(expr.args) == 3:
                 arr_t, d1 = synth(expr.args[0], ctx)
@@ -515,14 +616,7 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
                     if not (math.isclose(inferred.dist.mean, exp_val, rel_tol=1e-3, abs_tol=1e-3) and math.isclose(inferred.dist.stddev, 0.0, rel_tol=1e-3, abs_tol=1e-3)):
                         diags.append(Diagnostic("type-mismatch", stmt.span))
         
-        if isinstance(inferred.dist, tuple):
-            final_deps = inferred.deps
-        elif inferred.dist.stddev > 0 and not inferred.deps:
-            final_deps = frozenset({stmt.name})
-        elif inferred.dist.stddev > 0:
-            final_deps = inferred.deps | frozenset({stmt.name})
-        else:
-            final_deps = inferred.deps
+        final_deps = inferred.deps
             
         ctx.bind(stmt.name, MeasuredType(inferred.dist, final_deps))
         return diags
@@ -532,14 +626,7 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
         if not typ:
             return [Diagnostic("undefined-var", stmt.span, extra={"name": stmt.name})]
         inferred, diags = synth(stmt.value, ctx)
-        if isinstance(inferred.dist, tuple):
-            final_deps = inferred.deps
-        elif inferred.dist.stddev > 0 and not inferred.deps:
-            final_deps = frozenset({stmt.name})
-        elif inferred.dist.stddev > 0:
-            final_deps = inferred.deps | frozenset({stmt.name})
-        else:
-            final_deps = inferred.deps
+        final_deps = inferred.deps
             
         ctx.bind(stmt.name, MeasuredType(inferred.dist, final_deps))
         return diags
@@ -599,5 +686,37 @@ def check_stmt(stmt: Stmt, ctx: TypeContext) -> list[Diagnostic]:
     elif isinstance(stmt, ReturnStmt):
         typ, diags = synth(stmt.value, ctx)
         raise ReturnException(typ, diags)
+        
+    elif isinstance(stmt, ImportStmt):
+        from uncertain.parser import parse
+        
+        filepath = os.path.join(ctx.base_dir, *stmt.path) + ".calc"
+        if not os.path.exists(filepath):
+            return [Diagnostic("undefined-var", stmt.span, extra={"msg": f"Module file not found: {filepath}"})]
+            
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                src = f.read()
+            mod_stmts, _ = parse(src)
+        except Exception as e:
+            return [Diagnostic("type-mismatch", stmt.span, extra={"msg": f"Error loading module {'.'.join(stmt.path)}: {e}"})]
+            
+        mod_ctx = TypeContext(parent=None, max_unroll=ctx.max_unroll, base_dir=os.path.dirname(filepath))
+        mod_ctx.next_id = ctx.next_id
+        
+        mod_diags = []
+        for s in mod_stmts:
+            mod_diags.extend(check_stmt(s, mod_ctx))
+            
+        # keep IDs synchronized
+        ctx.next_id = mod_ctx.next_id
+        
+        # bundle bindings as struct
+        mod_fields = {}
+        for name, typ in mod_ctx.bindings.items():
+            mod_fields[name] = typ
+            
+        ctx.bind(stmt.alias, MeasuredType(mod_fields, {}))
+        return mod_diags
         
     return []

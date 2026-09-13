@@ -66,6 +66,7 @@ def tokenize(source: str) -> Iterator[Token]:
         ('RBRACE',   r'\}'),
         ('LBRACKET', r'\['),
         ('RBRACKET', r'\]'),
+        ('DOT',      r'\.'),
         ('LANGLE',   r'<'),
         ('RANGLE',   r'>'),
         ('COMMA',    r','),
@@ -130,7 +131,7 @@ def tokenize(source: str) -> Iterator[Token]:
                 yield Token(EXACT, value, line_num, column)
             else:
                 yield Token(IDENT, value, line_num, column)
-        elif kind in ('PLUS', 'MINUS', 'STAR', 'SLASH', 'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET', 'LANGLE', 'RANGLE', 'COMMA', 'COLON', 'EQUALS', 'SEMI', 'ARROW'):
+        elif kind in ('PLUS', 'MINUS', 'STAR', 'SLASH', 'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET', 'DOT', 'LANGLE', 'RANGLE', 'COMMA', 'COLON', 'EQUALS', 'SEMI', 'ARROW'):
             yield Token(kind, value, line_num, column)
         elif kind == 'NEWLINE':
             line_start = mo.end()

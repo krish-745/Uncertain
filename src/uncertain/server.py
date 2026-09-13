@@ -15,7 +15,7 @@ from uncertain.parser import parse, ParseError
 from uncertain.lexer import LexerError
 from uncertain.typechecker import TypeContext, check_stmt
 
-server = LanguageServer("uncertain-language-server", "v0.5.2")
+server = LanguageServer("uncertain-language-server", "v0.6.0")
 
 def check_document(ls: LanguageServer, uri: str, source: str):
     diagnostics = []

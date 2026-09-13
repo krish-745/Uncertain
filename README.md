@@ -46,7 +46,7 @@ When you write equations for physical measurements, sensor data, or statistical 
 
 A silent, common bug arises when you reuse a variable without tracking its mathematical correlation. For example, writing `a * a` in a normal programming language (or using a runtime uncertainty library) treats the two occurrences of `a` as if they were independent measurements. This **silently understates the true variance**, leading to overconfidence in your results.
 
-**`Uncertain` catches these correlation bugs at compile-time by enforcing dependency tracking in its type system.** Instead of a wrong answer, you get a pinpointed compiler error.
+**`Uncertain` eliminates these correlation bugs entirely using compile-time Affine Arithmetic.** The compiler tracks partial dependencies between variables, allowing it to accurately simulate covariance for reused variables without requiring manual annotations.
 
 ---
 
@@ -89,36 +89,34 @@ uncertain examples/my_experiment.calc
 
 ## The Hero Demo
 
-### Catching Correlation Bugs
+### Automatic Covariance Tracking
 
 Consider this simple program:
 
 ```calc
 let a = sensor_read();
 let variance_est = a * a;
+let diff = a - a;
 ```
 
 > **Note:** `sensor_read()` is a built-in that returns a `Normal(10.0, 1.0)` distribution — a sensor reading with a mean of 10 and a standard deviation of 1.
 
-Running `uncertain` on this file immediately catches the hidden dependency reuse:
+Running `uncertain` on this file perfectly tracks the dependency reuse. Instead of naively treating the two `a`s as independent, it automatically calculates the correct exact variance for `a * a`, and precisely evaluates `a - a` as `0.0` with `0.0` variance!
 
-```text
-error: uncertain reuse without correlation annotation
-  --> line 2:20
-   |
- 2 | let variance_est = a * a;
-   |                    ^^^^^ `a` appears twice in this product
-   |
-   = note: treating repeated occurrences of `a` as independent understates
-     the true variance of the result.
-   = help: use `square(a)` for the correct self-product variance formula,
-     or wrap with `correlated(..., ..., cov = ...)` if you have an explicit
-     covariance estimate.
+### Probability Queries
+
+You can explicitly evaluate the probability of events or confidence intervals at compile time using the `prob(...)` built-in:
+
+```calc
+let a = sensor_read();
+let b = sensor_read();
+let is_a_bigger = prob(a > b);
 ```
+The compiler calculates the exact normal CDF distribution to return the exact probability scalar.
 
 ### Catching Runtime Math Errors at Compile Time
 
-Beyond correlation checking, `uncertain` uses the same diagnostic system to catch mathematical domain errors **before your program ever evaluates**. For example, taking the square root of a distribution with a negative mean:
+Beyond correlation tracking, `uncertain` uses its diagnostic system to catch mathematical domain errors **before your program ever evaluates**. For example, taking the square root of a distribution with a negative mean:
 
 ```calc
 let a = sensor_read() - 15.0;
@@ -168,12 +166,12 @@ What is the variance of a * a?
    Result: 4.00 ± 20.00
    (BETTER: Detects correlation, but uses linear Taylor approximation, dropping higher-order terms. Notice the mean is completely wrong!)
 
-3. Uncertain DSL (forces `square(a)` at compile time):
+3. Uncertain DSL:
    Result: 29.00 ± 40.62
-   (PERFECT: Compiler caught the reuse, forced explicit intent, and used the exact higher-order formula.)
+   (PERFECT: Compiler tracked the affine lineage and injected lost non-linear variance to match the EXACT mathematical formula for E[X²] and Var(X²).)
 ```
 
-This single comparison proves the core thesis: `uncertainties` will happily compute a linear approximation of `a * a` without warning you. `uncertain` throws a **compile-time error**, forcing you to explicitly choose `square(a)`, which applies the *exact* mathematical formula for the variance of a squared Normal distribution:
+This comparison proves the core thesis: `uncertainties` will happily compute a linear approximation of `a * a` resulting in a heavily understated mean and variance. `uncertain`'s affine tracking engine automatically injects the lost non-linear variance bounds to compute the *exact* mathematical formula for the squared Normal distribution:
 
 ```
 E[X²]   = μ² + σ²
@@ -254,18 +252,26 @@ let root      = sqrt(w);        // sqrt: Delta-method propagation
 
 > **Approximation Warning:** When you combine variables from different distribution families (e.g., `Normal` + `Poisson`), the compiler falls back to a **Normal approximation via moment-matching** and emits an `approximation-warning`, so you are never silently affected by precision trade-offs.
 
-### Safe Variable Reuse
+### Structs & Records
 
-When you need to multiply a variable by itself or combine two known-correlated variables, use the mathematically safe built-in functions to bypass the `uncertain-reuse` error:
+Group data logically using struct literals:
 
 ```calc
-// For perfect self-correlation (squaring a variable):
-// Uses the exact formula E[X²] = μ² + σ²  and  Var(X²) = 2σ⁴ + 4μ²σ²
-let w_squared = square(w);
+let gps_coords = { x: sensor_read(), y: sensor_read() };
+let total_dist = sqrt(gps_coords.x * gps_coords.x + gps_coords.y * gps_coords.y);
+```
 
-// For two distinct variables with a known covariance:
-// Uses the full Var(XY) formula including the covariance term
-let correlated_area = correlated(w, h, cov=0.5);
+### Modules & Imports
+
+Build reusable libraries of constants and equations using the `import` statement. Imports are evaluated at compile time and exposed as structs.
+
+```calc
+// In physics.calc
+let g = 9.81;
+
+// In main.calc
+import physics as phys;
+let acceleration = phys.g;
 ```
 
 ### Functions & Arrays

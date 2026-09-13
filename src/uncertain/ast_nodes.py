@@ -163,5 +163,22 @@ class ArrayAccess:
     index: "Expr"
     span: Span
 
-Stmt = Union[LetStmt, VarStmt, AssignStmt, WhileStmt, IfStmt, ForStmt, FnDefStmt, ReturnStmt]
-Expr = Union[NumberLit, VarRef, BinOp, Call, ArrayLit, ArrayAccess]
+@dataclass
+class StructLit:
+    fields: dict[str, "Expr"]
+    span: Span
+
+@dataclass
+class FieldAccess:
+    obj: "Expr"
+    field: str
+    span: Span
+
+@dataclass
+class ImportStmt:
+    path: list[str]
+    alias: str
+    span: Span
+
+Stmt = Union[LetStmt, VarStmt, AssignStmt, WhileStmt, IfStmt, ForStmt, FnDefStmt, ReturnStmt, ImportStmt]
+Expr = Union[NumberLit, VarRef, BinOp, Call, ArrayLit, ArrayAccess, StructLit, FieldAccess]

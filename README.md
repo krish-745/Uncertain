@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://pypi.org/project/uncertain-lang/"><img src="https://img.shields.io/pypi/v/uncertain-lang?color=F800D7" alt="PyPI version"></a>
-  <a href="https://pypi.org/project/uncertain-lang/"><img src="https://img.shields.io/pypi/pyversions/uncertain-lang" alt="Python versions"></a>
+  <a href="https://pypi.org/project/uncertain-lang/"><img src="https://img.shields.io/pypi/pyversions/uncertain-lang?label=python&cacheSeconds=3600" alt="Python versions"></a>
   <a href="https://github.com/krish-745/Uncertain/actions/workflows/smoke-test.yml"><img src="https://github.com/krish-745/Uncertain/actions/workflows/smoke-test.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/krish-745/Uncertain/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>

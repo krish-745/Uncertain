@@ -1,130 +1,106 @@
+<h1 align="center">Uncertain</h1>
+
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/PyPI-uncertain--lang-F800D7?style=for-the-badge&logo=pypi&logoColor=white" alt="PyPI" />
-  <img src="https://img.shields.io/badge/uv-package%20manager-DE5FE9?style=for-the-badge&logo=python&logoColor=white" alt="uv" />
-  <img src="https://img.shields.io/badge/Pytest-tested-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white" alt="Pytest" />
-  <img src="https://img.shields.io/badge/Hypothesis-fuzz%20tested-6B5B95?style=for-the-badge&logo=python&logoColor=white" alt="Hypothesis" />
-  <img src="https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white" alt="NumPy" />
+  <b>A small language where every number carries its uncertainty,<br>and the compiler works out exactly how that uncertainty propagates.</b>
 </p>
 
-# Uncertain — The Uncertainty-Aware Programming Language
+<p align="center">
+  <a href="https://pypi.org/project/uncertain-lang/"><img src="https://img.shields.io/pypi/v/uncertain-lang?color=F800D7" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/uncertain-lang/"><img src="https://img.shields.io/pypi/pyversions/uncertain-lang" alt="Python versions"></a>
+  <a href="https://github.com/krish-745/Uncertain/actions/workflows/smoke-test.yml"><img src="https://github.com/krish-745/Uncertain/actions/workflows/smoke-test.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/krish-745/Uncertain/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
 
-> **A statically-typed arithmetic DSL where every value's type encodes its distributional uncertainty — and the compiler proves how that uncertainty compounds.**
-
-**Available on PyPI:** [pypi.org/project/uncertain-lang/](https://pypi.org/project/uncertain-lang/)
-
----
-
-## Table of Contents
-
-- [Why Uncertain?](#why-uncertain)
-- [Quick Start](#quick-start)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Running a Script](#running-a-script)
-- [The Hero Demo](#the-hero-demo)
-  - [Catching Correlation Bugs](#catching-correlation-bugs)
-  - [Catching Math Errors at Compile Time](#catching-runtime-math-errors-at-compile-time)
-- [Head-to-Head Comparison](#head-to-head-comparison)
-- [Language Guide](#language-guide)
-  - [11 Statistical Distributions](#11-statistical-distributions)
-  - [Compile-Time Control Flow & Mutability](#compile-time-control-flow--mutability)
-  - [Math & Operations](#math--operations)
-  - [Safe Variable Reuse](#safe-variable-reuse)
-  - [Functions & Arrays](#functions--arrays)
-  - [Language Server (LSP)](#language-server-lsp)
-  - [CLI Reference](#cli-reference)
-- [Architecture](#architecture)
-- [Testing](#testing)
-- [Contributing](#contributing)
-
----
-
-## Why Uncertain?
-
-When you write equations for physical measurements, sensor data, or statistical variables, those values are almost never exact — they are probability distributions.
-
-A silent, common bug arises when you reuse a variable without tracking its mathematical correlation. For example, writing `a * a` in a normal programming language (or using a runtime uncertainty library) treats the two occurrences of `a` as if they were independent measurements. This **silently understates the true variance**, leading to overconfidence in your results.
-
-**`Uncertain` eliminates these correlation bugs entirely using compile-time Affine Arithmetic.** The compiler tracks partial dependencies between variables, allowing it to accurately simulate covariance for reused variables without requiring manual annotations.
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- **Python 3.10+**
-- **[uv](https://astral.sh/uv/)** — fast Python package and environment manager (recommended)
-
-### Installation
-
-The compiler is published on PyPI and can be installed globally:
-
-```bash
-# Using pip
-pip install uncertain-lang
-
-# Using uv (recommended)
-uv tool install uncertain-lang
+```calc
+let width  = sensor_read();          // Normal(10, 1): a measurement with noise
+let area   = width * width;          // the compiler knows both factors are the same variable
+let p_big  = prob(area > 110);       // probability, computed at compile time
 ```
 
-To install from source:
+```text
+$ uncertain area.calc
+width = (mean=10.0000, stddev=1.0000)
+area = (mean=101.0000, stddev=20.0499)
+p_big = (mean=0.3268, stddev=0.0000)
+```
+
+Values in `Uncertain` are probability distributions, not single numbers. The type checker tracks each value's mean, standard deviation and **correlation with every other value**, so reusing a variable, as in `width * width`, gives the mathematically correct answer instead of silently understating the uncertainty.
+
+---
+
+## Why?
+
+Measurements, sensor readings and estimates are never exact. The classic way to propagate their uncertainty by hand, or with a runtime library, treats every operand as independent. That quietly breaks as soon as a value is used twice:
+
+| Computing `a * a` for `a = 2.0 ± 5.0` | Result | |
+|---|---|---|
+| Naive propagation (assumes independence) | `4.00 ± 14.14` | variance understated |
+| Python's [`uncertainties`](https://pythonhosted.org/uncertainties/) (linear approximation) | `4.00 ± 20.00` | mean and variance wrong |
+| **Uncertain** | **`29.00 ± 40.62`** | exact: E[X²] = μ² + σ², Var(X²) = 2σ⁴ + 4μ²σ² |
+
+`Uncertain` tracks dependencies between values with **affine arithmetic** at compile time. It uses exact moment formulas wherever they exist, and it rejects programs whose results would be meaningless (dividing by a distribution centred on zero, branching on an uncertain value, impossible distribution parameters) with precise, Rust-style diagnostics.
+
+*The comparison above comes from [`scripts/compare_uncertainties.py`](https://github.com/krish-745/Uncertain/blob/main/scripts/compare_uncertainties.py).*
+
+---
+
+## Install
+
+Requires Python 3.10 or newer.
+
+```bash
+pip install uncertain-lang        # or: uv tool install uncertain-lang
+```
+
+Then run any `.calc` file:
+
+```bash
+uncertain my_experiment.calc
+```
+
+To work on the compiler itself:
 
 ```bash
 git clone https://github.com/krish-745/Uncertain.git
 cd Uncertain
-pip install .
-```
-
-### Running a Script
-
-Once installed, the `uncertain` CLI is available on your `PATH`. Pass it any `.calc` file:
-
-```bash
-uncertain examples/my_experiment.calc
+uv sync --all-extras
+uv run uncertain examples/my_experiment.calc
 ```
 
 ---
 
-## The Hero Demo
+## A quick tour
 
-### Automatic Covariance Tracking
-
-Consider this simple program:
+### Correlations are tracked automatically
 
 ```calc
 let a = sensor_read();
-let variance_est = a * a;
-let diff = a - a;
+let b = sensor_read();       // an independent reading
+
+let square_a = a * a;        // (mean=101, stddev=20.05): exact, a is correlated with itself
+let diff     = a - a;        // (mean=0,   stddev=0): exactly zero
+let product  = a * b;        // (mean=100, stddev=14.18): independent factors
 ```
 
-> **Note:** `sensor_read()` is a built-in that returns a `Normal(10.0, 1.0)` distribution — a sensor reading with a mean of 10 and a standard deviation of 1.
+Every uncertain value remembers which sources of randomness it depends on, and how strongly. `a * a`, `a - a`, `(a + b) * a` and values passed through functions all come out right without any annotations.
 
-Running `uncertain` on this file perfectly tracks the dependency reuse. Instead of naively treating the two `a`s as independent, it automatically calculates the correct exact variance for `a * a`, and precisely evaluates `a - a` as `0.0` with `0.0` variance!
-
-### Probability Queries
-
-You can explicitly evaluate the probability of events or confidence intervals at compile time using the `prob(...)` built-in:
+### Probability queries
 
 ```calc
-let a = sensor_read();
-let b = sensor_read();
-let is_a_bigger = prob(a > b);   // 0.5
-let p_high = prob(a >= 11.5);    // 0.0668
+let temp      = normal_read(21.5, 0.8);
+let threshold = 23.0;
+let p_hot     = prob(temp > threshold);   // 0.0304
+let p_warm    = prob(temp - 21.5 >= 1);   // 0.1056
 ```
-`prob()` accepts `<`, `>`, `<=` and `>=`. The compiler computes the distribution of the difference of both sides (including any tracked correlation between them) and evaluates the normal CDF, returning a deterministic probability. If either side comes from a non-Normal family, the result is a normal approximation and an `approximation-warning` is emitted.
 
-### Catching Runtime Math Errors at Compile Time
+`prob()` accepts `<`, `>`, `<=` and `>=`. It computes the distribution of the difference between both sides, including any correlation between them, and evaluates the normal CDF.
 
-Beyond correlation tracking, `uncertain` uses its diagnostic system to catch mathematical domain errors **before your program ever evaluates**. For example, taking the square root of a distribution with a negative mean:
+### Mistakes are caught before anything runs
 
 ```calc
 let a = sensor_read() - 15.0;
 let b = sqrt(a);
 ```
-
-Yields a pinpointed math-domain error:
 
 ```text
 error: math domain error
@@ -136,300 +112,286 @@ error: math domain error
    = note: cannot compute the square root of a distribution with a negative mean (-5.0)
 ```
 
-> **See also:** For the full list of all diagnostics emitted by the compiler, see the [Error Catalog](docs/error-catalog.md).
+### Types describe distributions
 
----
-
-## Head-to-Head Comparison
-
-### `uncertain` vs. Python's `uncertainties`
-
-Python's popular [`uncertainties`](https://pythonhosted.org/uncertainties/) package is a fantastic tool, but it operates entirely at *runtime* using **linear approximations** (the first-order Taylor / Delta method).
-
-To see exactly why a compiler-enforced approach is safer and more precise, we include a script that computes `a * a` where `a = 2.0 ± 5.0`:
-
-```bash
-uv run python scripts/compare_uncertainties.py
+```calc
+let reading: Measured<Normal(10.0, 2.0)> = sensor_read();
 ```
-
-**Output:**
 
 ```text
---- Head-to-Head Comparison: Self-Multiplication (a * a) ---
-We have a sensor reading: a = 2.0 ± 5.0
-What is the variance of a * a?
-
-1. Naive Hand Calculation (Assuming Independence):
-   Result: 4.00 ± 14.14
-   (DANGEROUS: Silently understates variance by ignoring correlation)
-
-2. Python's `uncertainties` package (a * a):
-   Result: 4.00 ± 20.00
-   (BETTER: Detects correlation, but uses linear Taylor approximation, dropping higher-order terms. Notice the mean is completely wrong!)
-
-3. Uncertain DSL:
-   Result: 29.00 ± 40.62
-   (PERFECT: Compiler tracked the affine lineage and injected lost non-linear variance to match the EXACT mathematical formula for E[X²] and Var(X²).)
-```
-
-This comparison proves the core thesis: `uncertainties` will happily compute a linear approximation of `a * a` resulting in a heavily understated mean and variance. `uncertain`'s affine tracking engine automatically injects the lost non-linear variance bounds to compute the *exact* mathematical formula for the squared Normal distribution:
-
-```
-E[X²]   = μ² + σ²
-Var(X²) = 2σ⁴ + 4μ²σ²
+error: type annotation mismatch
+  --> line 1:1
+   |
+ 1 | let reading: Measured<Normal(10.0, 2.0)> = sensor_read();
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ inferred type does not match annotation
+   |
+   = note: `reading` is annotated as Normal(10, 2) (mean 10, stddev 2), but the inferred distribution has mean 10, stddev 1
 ```
 
 ---
 
-## Language Guide
+## Language guide
 
-### 11 Statistical Distributions
-
-`Uncertain` ships with a comprehensive built-in type system of 11 named distributions (plus the special `Exact` scalar type). Annotate variables with exactly the distribution that models your data — the type-checker automatically calculates their mathematical mean and variance.
-
-| Distribution | Type Annotation | Read Function | Notes |
-|---|---|---|---|
-| Normal | `Normal(μ, σ)` | `normal_read(μ, σ)` | `sensor_read()` is shorthand for `Normal(10, 1)` |
-| LogNormal | `LogNormal(μ, σ)` | `lognormal_read(μ, σ)` | |
-| Gamma | `Gamma(α, β)` | `gamma_read(α, β)` | Shape, Scale |
-| Uniform | `Uniform(a, b)` | `uniform_read()` | `uniform_read()` is `Uniform(0, 10)` |
-| Exponential | `Exponential(λ)` | `exponential_read(λ)` | |
-| Poisson | `Poisson(λ)` | `poisson_read(λ)` | Discrete |
-| Binomial | `Binomial(n, p)` | `binomial_read(n, p)` | Discrete |
-| Bernoulli | `Bernoulli(p)` | `bernoulli_read(p)` | Discrete |
-| Geometric | `Geometric(p)` | `geometric_read(p)` | Discrete; number of trials up to and including the first success (mean `1/p`) |
-| NegativeBinomial | `NegativeBinomial(r, p)` | `negbinom_read(r, p)` | Discrete; number of successes (probability `p`) before the `r`-th failure (mean `pr/(1-p)`) |
-| Empirical | `Empirical([...])` | `empirical_read([...])` | Discrete, custom data |
+### Values and variables
 
 ```calc
-// Continuous distributions
-let normal:  Measured<Normal(10.0, 1.0)>  = sensor_read();
-let price:   Measured<LogNormal(1, 0.5)>  = lognormal_read(1, 0.5);
-let wear:    Measured<Gamma(2, 2.5)>      = gamma_read(2, 2.5);
-let timeout: Measured<Uniform(0, 10)>     = uniform_read();
-let failure: Measured<Exponential(0.1)>   = exponential_read(0.1);
-
-// Discrete distributions
-let clicks:  Measured<Poisson(5)>               = poisson_read(5);
-let success: Measured<Binomial(100, 0.9)>       = binomial_read(100, 0.9);
-let flag:    Measured<Bernoulli(0.5)>           = bernoulli_read(0.5);
-let trials:  Measured<Geometric(0.2)>           = geometric_read(0.2);
-let batch:   Measured<NegativeBinomial(5, 0.5)> = negbinom_read(5, 0.5);
-let custom:  Measured<Empirical([1, 5, 9])>     = empirical_read([1, 5, 9]);
+let g = 9.81;                    // numbers: 1, 1.5, .5, 1e-3
+var count = 0;                   // `var` signals the value will be reassigned
+count = count + 1;
+let noisy = normal_read(0, 2);   // an uncertain value
+// comments start with //
 ```
 
-Distribution parameters and annotation arguments can be any deterministic expression, including variables and negative numbers (e.g. `normal_read(-offset, 2 * sigma)`). Invalid parameters, such as `poisson_read(-1)` or `binomial_read(10, 1.5)`, are reported as `math-domain-error`s.
+A value with standard deviation 0 is *deterministic*. Deterministic values can be used anywhere; uncertain values are rejected where a fixed number is required (loop conditions, array indices, distribution parameters).
 
-### Compile-Time Control Flow & Mutability
+### Distributions
 
-The language supports block scoping, mutable variables (`var`), arrays (`[...]`), `while` and `for` loops, and `if/else` branching. The compiler seamlessly tracks dependency lineages across block reassignments.
+Create uncertain values with a `*_read` function, and optionally state the expected distribution with a `Measured<...>` annotation. Annotations are checked against the inferred mean and standard deviation (to 0.1%).
 
-> **Important:** `Uncertain` enforces a strict separation between random variables and control-flow. Because loops and branches are **unrolled and evaluated entirely at compile-time**, you **cannot** branch on an uncertain variable (e.g., `stddev > 0`). Branching is restricted to deterministic values such as loop counters. Violating this rule causes the compiler to emit an `uncertain-branch` error (use `prob(...)` to reason about uncertain comparisons instead). Deterministic conditions support `<`, `>`, `<=`, `>=`, `==` and `!=`. Loops are unrolled at most 1000 times by default (`--max-unroll`).
+| Family | Annotation | Constructor | Notes |
+|---|---|---|---|
+| Normal | `Normal(μ, σ)` | `normal_read(μ, σ)` | `sensor_read()` is `Normal(10, 1)` |
+| Uniform | `Uniform(a, b)` | `uniform_read()` | `uniform_read()` is `Uniform(0, 10)` |
+| LogNormal | `LogNormal(μ, σ)` | `lognormal_read(μ, σ)` | μ, σ of the underlying normal |
+| Gamma | `Gamma(k, θ)` | `gamma_read(k, θ)` | shape k, scale θ |
+| Exponential | `Exponential(λ)` | `exponential_read(λ)` | rate λ |
+| Poisson | `Poisson(λ)` | `poisson_read(λ)` | discrete |
+| Binomial | `Binomial(n, p)` | `binomial_read(n, p)` | discrete; integer n |
+| Bernoulli | `Bernoulli(p)` | `bernoulli_read(p)` | discrete |
+| Geometric | `Geometric(p)` | `geometric_read(p)` | discrete; trials up to and including the first success (mean 1/p) |
+| NegativeBinomial | `NegativeBinomial(r, p)` | `negbinom_read(r, p)` | discrete; successes before the r-th failure (mean pr/(1−p)) |
+| Empirical | `Empirical([...])` | `empirical_read([...])` | mean and (population) stddev of your data |
+| Exact | `Exact(v)` | any deterministic value | stddev 0 |
 
 ```calc
-let sensors = [normal, price, wear];
-var sum = 0;
+let price: Measured<LogNormal(1, 0.5)>          = lognormal_read(1, 0.5);
+let wear:  Measured<Gamma(2, 2.5)>              = gamma_read(2, 2.5);
+let hits:  Measured<Binomial(100, 0.9)>         = binomial_read(100, 0.9);
+let data:  Measured<Empirical([-1.5, 2, 4.5])>  = empirical_read([-1.5, 2, 4.5]);
+```
+
+Parameters can be any deterministic expression, including variables and negative numbers. Invalid parameters, such as `poisson_read(-1)` or `binomial_read(10, 1.5)`, are compile errors.
+
+### Arithmetic and math functions
+
+| Operation | Accuracy for Normal inputs |
+|---|---|
+| `a + b`, `a - b`, scaling by a constant | exact, for every family |
+| `a * b` (with any correlation), `square(a)`, `pow(a, 3)` | exact |
+| `exp(a)`, `sin(a)`, `cos(a)`, `abs(a)` | exact |
+| `a / b`, `sqrt(a)`, `log(a)`, `pow(a, n)` for other n | first-order (delta method) |
+
+The compiler tells you when a result is approximate:
+
+- a `delta-method-warning` when a first-order result is unreliable, because the input's standard deviation is large compared with its mean;
+- an `approximation-warning` when a non-Normal value (Uniform, Poisson, ...) is multiplied, divided, passed to a nonlinear function or used in `prob()`. Sums of any family are always exact.
+
+If two *independent* readings are known to be correlated, say so explicitly:
+
+```calc
+let x = normal_read(20, 3);
+let y = normal_read(4, 0.5);
+let xy = correlated(x, y, cov=0.5);   // product of x and y with Cov(x, y) = 0.5
+```
+
+### Control flow
+
+Loops and branches are **unrolled at compile time**, so their conditions must be deterministic. Branching on an uncertain value is an `uncertain-branch` error; use `prob()` to reason about it instead.
+
+```calc
+let readings = [sensor_read(), sensor_read(), normal_read(12, 2)];
+var total = 0;
 
 for (var i = 0; i < 3; i = i + 1) {
-    if (i < 2) {
-        sum = sum + normal; // Compiler accurately tracks each branch!
-    } else {
-        sum = sum + price;
+    if (i != 1) {
+        total = total + readings[i];
     }
 }
+// total = (mean=22, stddev=2.2361)
+
+var n = 1;
+while (n < 100) {
+    n = n * 2;
+}
 ```
 
-### Math & Operations
+Conditions support `<`, `>`, `<=`, `>=`, `==` and `!=`. A loop may run at most 1000 iterations by default (`--max-unroll N` changes this). Variables declared inside a block remain visible after it.
 
-Combine measurements using standard arithmetic. The compiler propagates means, standard deviations and correlations automatically.
+### Arrays and structs
 
 ```calc
-let w = sensor_read();
-let h = sensor_read();
+let samples = [sensor_read(), sensor_read(), sensor_read()];
+let first   = samples[0];                  // indices must be deterministic integers
 
-let perimeter = w + w + h + h;  // sums: exact (w + w is correlated with itself)
-let area      = w * h;          // products: exact moments, including any covariance
-let ratio     = w / h;          // division: first-order (delta method)
-let root      = sqrt(w);        // sqrt, log: first-order (delta method)
+let point = { x: normal_read(3, 0.1), y: normal_read(4, 0.1) };
+let dist  = sqrt(square(point.x) + square(point.y));
 ```
 
-Built-in math functions: `square`, `sqrt`, `abs`, `log`, `exp`, `sin`, `cos` and `pow(x, n)` (integer constant `n`). Sums, products, `square`, `pow(x, 3)`, `exp`, `sin`, `cos` and `abs` use exact moment formulas for Normal inputs; division, `sqrt` and `log` use the first-order delta method and emit a `delta-method-warning` when the input's stddev is large relative to its mean. Numbers can be written as `1`, `1.5`, `.5` or `1e-3`.
-
-> **Approximation Warning:** The exact formulas above assume Normal inputs. When a non-Normal distribution (e.g. `Uniform` or `Poisson`) is multiplied, divided, passed to a nonlinear function or queried with `prob()`, the compiler uses a **moment-matching approximation** and emits an `approximation-warning`. Sums and scaling by constants are exact for every family and never warn.
-
-### Structs & Records
-
-Group data logically using struct literals:
+### Functions
 
 ```calc
-let gps_coords = { x: sensor_read(), y: sensor_read() };
-let total_dist = sqrt(gps_coords.x * gps_coords.x + gps_coords.y * gps_coords.y);
+fn scale(v: Measured<Normal(10, 1)>) -> Measured<Normal(20, 2)> {
+    return v * 2.0;
+}
+
+fn add(total, v) {
+    return total + v;
+}
+
+fn is_large(v) {
+    return v > 15;                          // must be deterministic for filter()
+}
+
+let readings = [sensor_read(), sensor_read(), sensor_read()];
+let scaled   = map(readings, scale);        // 3 x (mean=20, stddev=2)
+let total    = reduce(scaled, add, 0.0);    // (mean=60, stddev=3.4641)
+let large    = filter([10, 20, 30], is_large);   // [20, 30]
 ```
 
-### Modules & Imports
+Functions are evaluated at every call site during type checking, and argument and return annotations are checked on each call. `map` and `filter` take a one-argument function, `reduce` a two-argument function and an initial value. Recursion works as long as it stops after a bounded number of deterministic steps (at most 64 nested calls).
 
-Build reusable libraries of constants and equations using the `import` statement. Imports are evaluated at compile time and exposed as structs.
+### Modules
 
 ```calc
-// In physics.calc
+// physics.calc
 let g = 9.81;
-
-// In main.calc
-import physics as phys;
-let acceleration = phys.g;
+let drag = normal_read(0.47, 0.02);
 ```
-
-### Functions & Arrays
-
-`Uncertain` supports custom function definitions and first-class arrays. Functions are evaluated at each call site during type-checking, and argument and return annotations are checked on every call.
 
 ```calc
-fn scale_risk(base_risk: Measured<Normal(10, 1)>) -> Measured<Normal(20, 2)> {
-    return base_risk * 2.0;
-}
-
-fn add_risks(total, risk) {
-    return total + risk;
-}
-
-let risks = [sensor_read(), sensor_read(), sensor_read()];
-
-// Higher-order array functions evaluate at compile-time:
-let scaled = map(risks, scale_risk);             // 3 x (mean=20, stddev=2)
-let total_risk = reduce(scaled, add_risks, 0.0); // mean=60, stddev=3.4641
+// main.calc
+import physics as phys;                     // resolved relative to main.calc
+let weight = 70 * phys.g;
 ```
 
-`map` and `filter` take a one-argument function, `reduce` a two-argument function and an initial value. Recursion is allowed as long as it terminates after a bounded number of deterministic steps (at most 64 nested calls).
+An import exposes the module's top-level values as a struct. Nested paths such as `import lib.physics as p;` load `lib/physics.calc`.
 
-### Language Server (LSP)
+---
 
-The compiler ships with a built-in Language Server that provides real-time diagnostics and hover information (the inferred distribution of the variable or struct field under the cursor) directly in your editor (VS Code, Neovim, etc.). Imports are resolved relative to the open file.
+## Diagnostics
 
-To start the LSP server, simply run:
-```bash
-uncertain --lsp
-```
+| Code | Meaning |
+|---|---|
+| `syntax-error` | the source could not be parsed |
+| `undefined-var` | a variable is used before it is declared |
+| `type-mismatch` | a `Measured<...>` annotation does not match the inferred distribution |
+| `math-domain-error` | an undefined operation or invalid distribution parameters |
+| `uncertain-branch` | a condition or comparison depends on an uncertain value |
+| `not-constant` | a parameter, exponent, covariance or index must be deterministic |
+| `invalid-operand` | wrong kind of value, e.g. arithmetic on an array or a missing struct field |
+| `unknown-function` / `arity-mismatch` | calling a function that doesn't exist, or with the wrong arguments |
+| `invalid-return` | a function without `return`, or `return` outside a function |
+| `loop-limit` / `recursion-limit` | a loop or recursion that doesn't terminate at compile time |
+| `import-error` | a module could not be found, parsed or checked, or imports itself |
+| `approximation-warning` / `delta-method-warning` | *(warnings)* the result is an approximation |
 
-### CLI Reference
+Run `uncertain --explain <code>` for details, or see the [error catalog](https://github.com/krish-745/Uncertain/blob/main/docs/error-catalog.md) for an example of each.
 
-```
-uncertain <file.calc> [--check-only] [--output text|json] [--max-unroll N]
-uncertain --explain <error-code>
+---
+
+## Tooling
+
+### Command line
+
+```text
+uncertain FILE [--check-only] [--output text|json] [--max-unroll N]
+uncertain --explain CODE
 uncertain --lsp
 uncertain --version
 ```
 
-| Flag | Description |
+| Option | Description |
 |---|---|
-| `<file.calc>` | Path to the `.calc` source file to compile and evaluate. Imports are resolved relative to this file. |
-| `--check-only` | Run only the type-checker and print diagnostics, without printing values. |
-| `--output json` | Print a single JSON document: `{"status", "diagnostics", "values", "result"}`. |
-| `--max-unroll N` | Maximum number of iterations a loop may be unrolled (default 1000). |
-| `--explain CODE` | Explain a diagnostic code, e.g. `uncertain --explain uncertain-branch`. |
-| `--lsp` | Start the Language Server on stdio. |
+| `FILE` | the `.calc` program to check; imports are resolved relative to it |
+| `--check-only` | report diagnostics without printing values |
+| `--output json` | print one JSON document: `{"status", "diagnostics", "values", "result"}` |
+| `--max-unroll N` | maximum loop iterations (default 1000) |
+| `--explain CODE` | explain a diagnostic code |
+| `--lsp` | start the language server on stdio |
 
-Exit codes: `0` success (warnings allowed), `1` errors in the program, `2` internal compiler error.
+The CLI prints every top-level value. If the program ends with an expression without a trailing `;`, that value is printed after `=>`. Exit codes: `0` success (warnings allowed), `1` errors in the program, `2` internal compiler error.
 
-**Type-check only (no evaluation):**
-```bash
-uncertain examples/my_experiment.calc --check-only
+### Editor support
+
+`uncertain --lsp` is a Language Server that provides live diagnostics, plus hover showing the inferred distribution of the variable or struct field under the cursor. Any editor with a generic LSP client can use it. For example, in Neovim:
+
+```lua
+vim.api.nvim_create_autocmd({ "BufEnter" }, {
+  pattern = "*.calc",
+  callback = function()
+    vim.lsp.start({ name = "uncertain", cmd = { "uncertain", "--lsp" } })
+  end,
+})
 ```
 
-**Full evaluation:**
+### Browser playground
+
+[`docs/playground.html`](https://github.com/krish-745/Uncertain/blob/main/docs/playground.html) runs the compiler in the browser via Pyodide, with no install. From a clone of the repository:
+
 ```bash
-uncertain examples/demo.calc
-```
-
-A successful run prints each named binding and its inferred distribution. If the program ends with an expression (no trailing `;`), its value is printed after `=>`:
-
-```text
-perimeter = (mean=40.0000, stddev=2.8284)
-area = (mean=100.0000, stddev=14.1774)
-ratio = (mean=1.0000, stddev=0.1414)
-...
+python -m http.server 8000
+# then open http://localhost:8000/docs/playground.html
 ```
 
 ---
 
-## Architecture
+## How it works
 
-The compiler is structured as a classic pipeline. All source lives under `src/uncertain/`.
+Every uncertain value is represented as an affine form over independent standard-normal noise sources:
+
+```
+X = μ + c₁·ε₁ + c₂·ε₂ + ... + cₙ·εₙ
+```
+
+- Each `*_read()` call introduces a fresh noise source εₖ.
+- Linear operations combine the coefficients exactly, so every variance and covariance, and effects like `a - a = 0`, follow directly.
+- Nonlinear operations (`*`, `exp`, `sin`, ...) use exact moment formulas for the result's mean and variance. Their linear part uses the slope E[f′(X)], which by Stein's lemma reproduces the exact covariance with the inputs. Any remaining variance becomes a new independent noise source, so later operations see the correct total spread and correlation.
+
+Because everything is computed from the program text, loops and branches are unrolled and functions are expanded at compile time. The checked program is its own answer: there is no separate runtime.
+
+### Limitations
+
+- **Distribution shape:** the compiler tracks means, variances and covariances, not full distribution shapes. After a nonlinear operation, results are summarised by their moments, and `prob()` assumes the compared difference is normal.
+- **Control flow:** it must be deterministic. You can't branch on uncertain values (by design).
+- **Variables:** `let` and `var` currently behave identically; the distinction documents intent but reassigning a `let` is not yet an error.
+- **Function scope:** functions see the caller's variables (dynamic scope), and functions defined in an imported module are not exported, only its values.
+
+---
+
+## Development
 
 ```
 src/uncertain/
-├── cli.py            — Entry point; argument parsing and pipeline orchestration
-├── lexer.py          — Tokeniser; converts .calc source text into a token stream
-├── parser.py         — Recursive-descent parser; produces a typed AST
-├── ast_nodes.py      — AST node dataclasses
-├── typechecker.py    — Type-checker; infers and propagates distributions, unrolls control flow,
-│                       tracks dependency lineages, and emits structured diagnostics.
-│                       `check_program()` is the entry point used by the CLI, LSP and playground.
-├── dependency.py     — Affine-form algebra used by the type-checker for correlation tracking
-├── distributions.py  — Core distribution math (moments of named families, products, nonlinear functions)
-├── diagnostics.py    — Diagnostic kinds and Rust-style error rendering
-├── output.py         — Rendering of inferred values (text and JSON)
-└── server.py         — Language Server (diagnostics and hover)
+├── cli.py            command-line entry point
+├── lexer.py          source text → tokens
+├── parser.py         tokens → AST (ast_nodes.py)
+├── typechecker.py    inference, affine dependency tracking, control-flow unrolling;
+│                     check_program() is the entry point for the CLI, LSP and playground
+├── distributions.py  moment formulas for named families, products and nonlinear functions
+├── dependency.py     affine-form algebra
+├── diagnostics.py    diagnostic kinds and Rust-style rendering
+├── output.py         text and JSON rendering of values
+└── server.py         language server (diagnostics and hover)
 ```
-
----
-
-## Testing
-
-The project has a robust, property-based test suite covering the full compiler pipeline.
-
-| Test Area | Description |
-|---|---|
-| **Lexer & Parser** | Fuzz-tested with thousands of randomly generated inputs via `hypothesis` to ensure zero unhandled exceptions |
-| **Type-checker** | Unit and regression tests for inference, dependency tracking, control flow, functions, imports and diagnostics; whole-program fuzzing checks the checker never crashes |
-| **Distribution Math** | Hypothesis-driven property tests, plus Monte Carlo cross-checks (`tests/test_monte_carlo.py`) of every analytic formula and of correlations through nonlinear functions |
-| **CLI output** | Golden tests compare rendered diagnostics and values against `tests/golden/*.expected.txt` |
-| **Language Server** | Diagnostics publishing and hover are tested against a stub client |
-| **Performance** | Type-checker dependency-union performance is validated against large, generated programs |
-
-**Run the full test suite:**
 
 ```bash
-# Windows
-.\test.bat
-
-# Linux / macOS
-uv run pytest tests/
+uv run pytest tests/                           # full test suite
+uv run python scripts/monte_carlo_report.py    # analytic formulas vs. random sampling
+uv run python scripts/gen_error_catalog.py     # regenerate docs/error-catalog.md
 ```
 
-**Run the Monte Carlo cross-validation** (proves that analytic Delta-method formulas match empirical random sampling):
+The test suite includes:
 
-```bash
-uv run python scripts/monte_carlo_report.py
-```
+- unit and regression tests for every language feature;
+- property-based fuzzing (via Hypothesis) of the lexer, parser and whole programs, checking that the compiler never crashes;
+- Monte Carlo cross-checks of every analytic formula and of correlations through nonlinear functions;
+- golden tests of the rendered diagnostics;
+- tests of the language server.
 
-**Run the head-to-head comparison:**
+CI runs the suite on Python 3.10 to 3.13.
 
-```bash
-uv run python scripts/compare_uncertainties.py
-```
+Contributions are welcome. Please open an issue first for significant changes, and make sure `uv run pytest tests/` passes. See [CHANGELOG.md](https://github.com/krish-745/Uncertain/blob/main/CHANGELOG.md) for release history.
 
----
+## License
 
-## Contributing
-
-Contributions are welcome! To get started:
-
-1. Clone the repository and create a virtual environment:
-   ```bash
-   git clone https://github.com/krish-745/Uncertain.git
-   cd Uncertain
-   uv sync --all-extras
-   ```
-2. Make your changes and ensure all tests pass:
-   ```bash
-   uv run pytest tests/
-   ```
-3. Open a pull request with a clear description of the change and why it's needed.
-
-Please open an issue first for any significant feature additions or breaking changes.
-
----
-
-<p align="center">
-  <b>Built with ❤️ to keep data precise</b>
-</p>
+[MIT](https://github.com/krish-745/Uncertain/blob/main/LICENSE)

@@ -1,0 +1,2 @@
+let a = sensor_read();
+let b = sqr(a);

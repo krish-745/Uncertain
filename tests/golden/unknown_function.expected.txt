@@ -1,0 +1,8 @@
+error: unknown function
+  --> line 2:9
+   |
+ 2 | let b = sqr(a);
+   |         ^^^^^^ no such function
+   |
+   = note: no function named 'sqr'; did you mean 'sqrt'?
+

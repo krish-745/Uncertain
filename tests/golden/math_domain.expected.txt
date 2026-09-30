@@ -1,0 +1,8 @@
+error: math domain error
+  --> line 2:9
+   |
+ 2 | let b = sqrt(a);
+   |         ^^^^^^^ invalid operation
+   |
+   = note: cannot compute the square root of a distribution with a negative mean (-5.0)
+

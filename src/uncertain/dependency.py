@@ -1,7 +1,6 @@
-from typing import Dict
-from uncertain.ast_nodes import Span
-from uncertain.diagnostics import Diagnostic
-
+# A value's dependencies are an affine form over independent unit-variance noise sources:
+#   X = mean + Σ_k coeff_k · ε_k
+# so variances and covariances follow directly from the coefficients.
 AffineForm = dict[int, float]
 
 def get_cov(a: AffineForm, b: AffineForm) -> float:
@@ -33,6 +32,3 @@ def scale_affine(a: AffineForm, scale: float) -> AffineForm:
 
 def linear_comb_affine(a: AffineForm, scale_a: float, b: AffineForm, scale_b: float) -> AffineForm:
     return add_affine(scale_affine(a, scale_a), scale_affine(b, scale_b))
-
-def check_reuse(op: str, left_deps: AffineForm, right_deps: AffineForm, span: Span) -> Diagnostic | None:
-    return None

@@ -1,0 +1,6 @@
+let a = sensor_read();
+var hits = 0;
+if (a > 10) {
+    hits = hits + 1;
+}
+let p = prob(a > 10);

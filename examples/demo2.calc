@@ -1,3 +1,12 @@
-let a: Gaussian = N(0.0, 10.0);
-let result = a * a;
-return result;
+// Self-products are tracked automatically: the compiler knows both
+// operands of `a * a` are the same random variable.
+let a: Measured<Normal(0.0, 10.0)> = normal_read(0.0, 10.0);
+
+let result = a * a;           // mean 100 (= σ²), stddev 141.42 (= √2·σ²)
+let also_result = square(a);  // identical to a * a
+
+// Independent readings with the same distribution are NOT the same variable:
+let b = normal_read(0.0, 10.0);
+let independent = a * b;      // mean 0, stddev 100
+
+result

@@ -1,2 +1,4 @@
 let a = sensor_read();
 let variance_est = a * a;
+let diff = a - a;
+let same = square(a);

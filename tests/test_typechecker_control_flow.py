@@ -98,4 +98,6 @@ def test_loop_iteration_limit():
     for stmt in stmts:
         diags.extend(check_stmt(stmt, ctx))
     
-    assert any(d.kind == "uncertain-branch" and "limit exceeded" in d.extra.get("msg", "") for d in diags)
+    assert any(d.kind == "loop-limit" for d in diags)
+    # The loop stops at the limit instead of running one extra iteration
+    assert ctx.lookup("a").dist.mean == 1000.0

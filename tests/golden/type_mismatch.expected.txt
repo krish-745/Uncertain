@@ -1,0 +1,8 @@
+error: type annotation mismatch
+  --> line 1:1
+   |
+ 1 | let reading: Measured<Normal(10.0, 2.0)> = sensor_read();
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ inferred type does not match annotation
+   |
+   = note: `reading` is annotated as Normal(10, 2) (mean 10, stddev 2), but the inferred distribution has mean 10, stddev 1
+

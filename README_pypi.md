@@ -87,9 +87,10 @@ You can explicitly evaluate the probability of events or confidence intervals at
 ```calc
 let a = sensor_read();
 let b = sensor_read();
-let is_a_bigger = prob(a > b);
+let is_a_bigger = prob(a > b);   // 0.5
+let p_high = prob(a >= 11.5);    // 0.0668
 ```
-The compiler calculates the exact normal CDF distribution to return the exact probability scalar.
+`prob()` accepts `<`, `>`, `<=` and `>=`. The compiler computes the distribution of the difference of both sides (including any tracked correlation between them) and evaluates the normal CDF, returning a deterministic probability. If either side comes from a non-Normal family, the result is a normal approximation and an `approximation-warning` is emitted.
 
 ### Catching Runtime Math Errors at Compile Time
 
@@ -165,16 +166,16 @@ Var(X²) = 2σ⁴ + 4μ²σ²
 
 | Distribution | Type Annotation | Read Function | Notes |
 |---|---|---|---|
-| Normal | `Normal(μ, σ)` | `sensor_read()` | Default for `sensor_read()` |
+| Normal | `Normal(μ, σ)` | `normal_read(μ, σ)` | `sensor_read()` is shorthand for `Normal(10, 1)` |
 | LogNormal | `LogNormal(μ, σ)` | `lognormal_read(μ, σ)` | |
 | Gamma | `Gamma(α, β)` | `gamma_read(α, β)` | Shape, Scale |
-| Uniform | `Uniform(a, b)` | `uniform_read()` | |
+| Uniform | `Uniform(a, b)` | `uniform_read()` | `uniform_read()` is `Uniform(0, 10)` |
 | Exponential | `Exponential(λ)` | `exponential_read(λ)` | |
 | Poisson | `Poisson(λ)` | `poisson_read(λ)` | Discrete |
 | Binomial | `Binomial(n, p)` | `binomial_read(n, p)` | Discrete |
 | Bernoulli | `Bernoulli(p)` | `bernoulli_read(p)` | Discrete |
-| Geometric | `Geometric(p)` | `geometric_read(p)` | Discrete |
-| NegativeBinomial | `NegativeBinomial(r, p)` | `negbinom_read(r, p)` | Discrete |
+| Geometric | `Geometric(p)` | `geometric_read(p)` | Discrete; number of trials up to and including the first success (mean `1/p`) |
+| NegativeBinomial | `NegativeBinomial(r, p)` | `negbinom_read(r, p)` | Discrete; number of successes (probability `p`) before the `r`-th failure (mean `pr/(1-p)`) |
 | Empirical | `Empirical([...])` | `empirical_read([...])` | Discrete, custom data |
 
 ```calc
@@ -194,11 +195,13 @@ let batch:   Measured<NegativeBinomial(5, 0.5)> = negbinom_read(5, 0.5);
 let custom:  Measured<Empirical([1, 5, 9])>     = empirical_read([1, 5, 9]);
 ```
 
+Distribution parameters and annotation arguments can be any deterministic expression, including variables and negative numbers (e.g. `normal_read(-offset, 2 * sigma)`). Invalid parameters, such as `poisson_read(-1)` or `binomial_read(10, 1.5)`, are reported as `math-domain-error`s.
+
 ### Compile-Time Control Flow & Mutability
 
 The language supports block scoping, mutable variables (`var`), arrays (`[...]`), `while` and `for` loops, and `if/else` branching. The compiler seamlessly tracks dependency lineages across block reassignments.
 
-> **Important:** `Uncertain` enforces a strict separation between random variables and control-flow. Because loops and branches are **unrolled and evaluated entirely at compile-time**, you **cannot** branch on an uncertain variable (e.g., `stddev > 0`). Branching is restricted to deterministic values such as loop counters. Violating this rule causes the compiler to emit an `uncertain-branch` error.
+> **Important:** `Uncertain` enforces a strict separation between random variables and control-flow. Because loops and branches are **unrolled and evaluated entirely at compile-time**, you **cannot** branch on an uncertain variable (e.g., `stddev > 0`). Branching is restricted to deterministic values such as loop counters. Violating this rule causes the compiler to emit an `uncertain-branch` error (use `prob(...)` to reason about uncertain comparisons instead). Deterministic conditions support `<`, `>`, `<=`, `>=`, `==` and `!=`. Loops are unrolled at most 1000 times by default (`--max-unroll`).
 
 ```calc
 let sensors = [normal, price, wear];
@@ -215,19 +218,21 @@ for (var i = 0; i < 3; i = i + 1) {
 
 ### Math & Operations
 
-Combine independent measurements using standard arithmetic. The compiler propagates means and standard deviations automatically using the Delta method.
+Combine measurements using standard arithmetic. The compiler propagates means, standard deviations and correlations automatically.
 
 ```calc
 let w = sensor_read();
 let h = sensor_read();
 
-let perimeter = w + w + h + h;  // addition: σ² summed in quadrature
-let area      = w * h;          // independent multiplication: Delta-method
-let ratio     = w / h;          // independent division: Delta-method
-let root      = sqrt(w);        // sqrt: Delta-method propagation
+let perimeter = w + w + h + h;  // sums: exact (w + w is correlated with itself)
+let area      = w * h;          // products: exact moments, including any covariance
+let ratio     = w / h;          // division: first-order (delta method)
+let root      = sqrt(w);        // sqrt, log: first-order (delta method)
 ```
 
-> **Approximation Warning:** When you combine variables from different distribution families (e.g., `Normal` + `Poisson`), the compiler falls back to a **Normal approximation via moment-matching** and emits an `approximation-warning`, so you are never silently affected by precision trade-offs.
+Built-in math functions: `square`, `sqrt`, `abs`, `log`, `exp`, `sin`, `cos` and `pow(x, n)` (integer constant `n`). Sums, products, `square`, `pow(x, 3)`, `exp`, `sin`, `cos` and `abs` use exact moment formulas for Normal inputs; division, `sqrt` and `log` use the first-order delta method and emit a `delta-method-warning` when the input's stddev is large relative to its mean. Numbers can be written as `1`, `1.5`, `.5` or `1e-3`.
+
+> **Approximation Warning:** The exact formulas above assume Normal inputs. When a non-Normal distribution (e.g. `Uniform` or `Poisson`) is multiplied, divided, passed to a nonlinear function or queried with `prob()`, the compiler uses a **moment-matching approximation** and emits an `approximation-warning`. Sums and scaling by constants are exact for every family and never warn.
 
 ### Structs & Records
 
@@ -253,23 +258,29 @@ let acceleration = phys.g;
 
 ### Functions & Arrays
 
-`Uncertain` supports custom function definitions and first-class arrays. Functions are evaluated dynamically during type-checking.
+`Uncertain` supports custom function definitions and first-class arrays. Functions are evaluated at each call site during type-checking, and argument and return annotations are checked on every call.
 
 ```calc
-fn compute_risk(base_risk: Measured<Normal(0,1)>, multiplier) -> Measured<Normal> {
-    return base_risk * multiplier;
+fn scale_risk(base_risk: Measured<Normal(10, 1)>) -> Measured<Normal(20, 2)> {
+    return base_risk * 2.0;
+}
+
+fn add_risks(total, risk) {
+    return total + risk;
 }
 
 let risks = [sensor_read(), sensor_read(), sensor_read()];
 
 // Higher-order array functions evaluate at compile-time:
-let mapped = map(risks, compute_risk);
-let total_risk = reduce(mapped, add_risks, 0.0);
+let scaled = map(risks, scale_risk);             // 3 x (mean=20, stddev=2)
+let total_risk = reduce(scaled, add_risks, 0.0); // mean=60, stddev=3.4641
 ```
+
+`map` and `filter` take a one-argument function, `reduce` a two-argument function and an initial value. Recursion is allowed as long as it terminates after a bounded number of deterministic steps (at most 64 nested calls).
 
 ### Language Server (LSP)
 
-The compiler ships with a built-in Language Server to provide real-time diagnostic squiggles and hover information directly in your editor (like VS Code, Neovim, etc.).
+The compiler ships with a built-in Language Server that provides real-time diagnostics and hover information (the inferred distribution of the variable or struct field under the cursor) directly in your editor (VS Code, Neovim, etc.). Imports are resolved relative to the open file.
 
 To start the LSP server, simply run:
 ```bash
@@ -279,13 +290,22 @@ uncertain --lsp
 ### CLI Reference
 
 ```
-uncertain <file.calc> [--check-only]
+uncertain <file.calc> [--check-only] [--output text|json] [--max-unroll N]
+uncertain --explain <error-code>
+uncertain --lsp
+uncertain --version
 ```
 
 | Flag | Description |
 |---|---|
-| `<file.calc>` | Path to the `.calc` source file to compile and evaluate |
-| `--check-only` | Run only the type-checker; do not evaluate. Exits `0` on success, `1` on errors. |
+| `<file.calc>` | Path to the `.calc` source file to compile and evaluate. Imports are resolved relative to this file. |
+| `--check-only` | Run only the type-checker and print diagnostics, without printing values. |
+| `--output json` | Print a single JSON document: `{"status", "diagnostics", "values", "result"}`. |
+| `--max-unroll N` | Maximum number of iterations a loop may be unrolled (default 1000). |
+| `--explain CODE` | Explain a diagnostic code, e.g. `uncertain --explain uncertain-branch`. |
+| `--lsp` | Start the Language Server on stdio. |
+
+Exit codes: `0` success (warnings allowed), `1` errors in the program, `2` internal compiler error.
 
 **Type-check only (no evaluation):**
 ```bash
@@ -297,11 +317,12 @@ uncertain my_experiment.calc --check-only
 uncertain my_experiment.calc
 ```
 
-A successful run prints each named binding and its inferred distribution:
+A successful run prints each named binding and its inferred distribution. If the program ends with an expression (no trailing `;`), its value is printed after `=>`:
 
 ```text
 perimeter = (mean=40.0000, stddev=2.8284)
-area      = (mean=100.0000, stddev=2.0000)
+area = (mean=100.0000, stddev=14.1774)
+ratio = (mean=1.0000, stddev=0.1414)
 ...
 ```
 

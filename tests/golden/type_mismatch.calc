@@ -1,0 +1,1 @@
+let reading: Measured<Normal(10.0, 2.0)> = sensor_read();

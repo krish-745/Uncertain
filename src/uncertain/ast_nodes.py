@@ -5,7 +5,7 @@ from typing import Union
 class Span:
     line: int
     col: int
-    length: int
+    length: int   # a length <= 0 means "to the end of the line" (e.g. a span covering several lines)
 
 @dataclass
 class NumberLit:
@@ -19,7 +19,7 @@ class VarRef:
 
 @dataclass
 class BinOp:
-    op: str            # "+" "-" "*" "/"
+    op: str            # "+" "-" "*" "/" "<" ">" "<=" ">=" "==" "!="
     left: "Expr"
     right: "Expr"
     span: Span
@@ -86,6 +86,22 @@ class ExponentialLit:
     lam: "Expr"
 
 DistLit = Union[NormalLit, UniformLit, ExactLit, EmpiricalLit, LogNormalLit, PoissonLit, BinomialLit, GammaLit, BernoulliLit, NegativeBinomialLit, GeometricLit, ExponentialLit]
+
+# Distribution literal class -> family name (as used by `distributions.moments`)
+DIST_LIT_FAMILIES = {
+    NormalLit: "Normal",
+    UniformLit: "Uniform",
+    ExactLit: "Exact",
+    EmpiricalLit: "Empirical",
+    LogNormalLit: "LogNormal",
+    PoissonLit: "Poisson",
+    BinomialLit: "Binomial",
+    GammaLit: "Gamma",
+    BernoulliLit: "Bernoulli",
+    NegativeBinomialLit: "NegativeBinomial",
+    GeometricLit: "Geometric",
+    ExponentialLit: "Exponential",
+}
 
 @dataclass
 class LetStmt:

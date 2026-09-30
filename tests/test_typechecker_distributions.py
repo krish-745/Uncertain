@@ -43,12 +43,28 @@ def test_approximation_warning():
     source = """
     let u = uniform_read();
     let n = sensor_read();
-    let res = u + n;
+    let res = u * n;
     """
     stmts, _ = parse(source)
     ctx = TypeContext()
     diags = []
     for stmt in stmts:
         diags.extend(check_stmt(stmt, ctx))
-    
+
     assert any(d.kind == "approximation-warning" for d in diags)
+
+def test_no_approximation_warning_for_sums():
+    # Means and variances of sums are exact for every distribution family
+    source = """
+    let u = uniform_read();
+    let n = sensor_read();
+    let res = u + n - 1.0;
+    let scaled = u * 2.0;
+    """
+    stmts, _ = parse(source)
+    ctx = TypeContext()
+    diags = []
+    for stmt in stmts:
+        diags.extend(check_stmt(stmt, ctx))
+
+    assert diags == []

@@ -1,0 +1,8 @@
+error: uncertain branch
+  --> line 3:5
+   |
+ 3 | if (a > 10) {
+   |     ^^^^^^ condition is not deterministic
+   |
+   = note: cannot compare uncertain values with '>' at compile time; use prob(...) to get the probability instead
+

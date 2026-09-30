@@ -10,7 +10,7 @@
         #editor { width: 50%; height: 100%; border-right: 1px solid #ccc; }
         #output-panel { width: 50%; height: 100%; padding: 20px; box-sizing: border-box; background: #f5f5f5; overflow-y: auto; }
         pre { white-space: pre-wrap; margin: 0; }
-        .error { color: red; }
+        .error { color: #c00; }
     </style>
 </head>
 <body>
@@ -21,74 +21,82 @@
     </div>
 
     <script>
+        // By default the latest release is installed from PyPI. To try a local build, serve the
+        // repository root and open docs/playground.html?wheel=../dist/<wheel file name>.whl
+        const WHEEL = new URLSearchParams(window.location.search).get("wheel") || "uncertain-lang";
+
         let pyodide;
         let editor;
+        let runTimer;
 
-        async function initPyodide() {
-            pyodide = await loadPyodide();
-            await pyodide.loadPackage("micropip");
-            const micropip = pyodide.pyimport("micropip");
-            try {
-                await micropip.install('../dist/uncertain_lang-0.5.2-py3-none-any.whl');
-                document.getElementById("output").textContent = "Ready! Type some code...";
-            } catch (e) {
-                document.getElementById("output").textContent = "Error loading uncertain lang: " + e;
-            }
-        }
-
-        function runCode() {
-            if (!pyodide) return;
-            const code = editor.getValue();
-            
-            const pythonScript = `
+        const PYTHON_CHECK = `
 import json
 from uncertain.parser import parse, ParseError
 from uncertain.lexer import LexerError
-from uncertain.typechecker import TypeContext, check_stmt
+from uncertain.typechecker import TypeContext, check_program
 from uncertain.diagnostics import format_diagnostic
+from uncertain.output import format_value
 
 def check_code(source):
     try:
         stmts, expr = parse(source)
     except (ParseError, LexerError) as e:
         return json.dumps({"status": "error", "message": str(e)})
-        
+
     ctx = TypeContext()
-    all_diags = []
-    for stmt in stmts:
-        all_diags.extend(check_stmt(stmt, ctx))
-        
+    all_diags = check_program(stmts, ctx, expr)
     errors = [d for d in all_diags if d.severity == "error"]
-    
+
     out = ""
     source_lines = source.splitlines()
     for diag in all_diags:
         out += format_diagnostic(diag, source_lines) + "\\n\\n"
-        
-    if not all_diags:
-        out += "Typecheck passed.\\n"
-        
-    for name, typ in ctx.bindings.items():
-        out += f"{name} = (mean={typ.dist.mean:.4f}, stddev={typ.dist.stddev:.4f})\\n"
-        
-    return json.dumps({"status": "ok", "output": out})
 
-check_code(code_to_check)
-            `;
-            
-            pyodide.globals.set("code_to_check", code);
+    if not errors:
+        if not all_diags:
+            out += "Typecheck passed.\\n\\n"
+        for name, typ in ctx.bindings.items():
+            out += f"{name} = {format_value(typ)}\\n"
+        if ctx.result is not None:
+            out += f"=> {format_value(ctx.result)}\\n"
+
+    return json.dumps({"status": "ok", "output": out})
+`;
+
+        async function initPyodide() {
+            const outEl = document.getElementById("output");
+            pyodide = await loadPyodide();
+            await pyodide.loadPackage("micropip");
+            const micropip = pyodide.pyimport("micropip");
             try {
-                const resultStr = pyodide.runPython(pythonScript);
-                const result = JSON.parse(resultStr);
-                const outEl = document.getElementById("output");
-                if (result.status === "error") {
-                    outEl.innerHTML = '<span class="error">' + result.message + '</span>';
-                } else {
-                    outEl.textContent = result.output;
-                }
+                // deps=False: the language-server dependency (pygls) isn't needed in the browser
+                await micropip.install.callKwargs(WHEEL, { deps: false });
+                pyodide.runPython(PYTHON_CHECK);
+                outEl.textContent = "Ready! Type some code...";
             } catch (e) {
-                document.getElementById("output").textContent = e.toString();
+                pyodide = null;
+                outEl.textContent = "Error loading uncertain lang: " + e;
             }
+        }
+
+        function runCode() {
+            if (!pyodide) return;
+            const outEl = document.getElementById("output");
+            try {
+                const checkCode = pyodide.globals.get("check_code");
+                const result = JSON.parse(checkCode(editor.getValue()));
+                checkCode.destroy();
+                outEl.className = result.status === "error" ? "error" : "";
+                outEl.textContent = result.status === "error" ? result.message : result.output;
+            } catch (e) {
+                outEl.className = "error";
+                outEl.textContent = e.toString();
+            }
+        }
+
+        function scheduleRun() {
+            clearTimeout(runTimer);
+            runTimer = setTimeout(runCode, 300);
         }
 
         require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }});
@@ -97,17 +105,16 @@ check_code(code_to_check)
                 value: [
                     'let a = sensor_read();',
                     'let b = a * 2.0;',
-                    'let c = a * b; // uncertain-reuse error',
-                ].join('\\n'),
+                    'let c = a * b;        // correlation between a and b is tracked automatically',
+                    'let d = a - a;        // exactly 0 with 0 variance',
+                    'let p = prob(c > 200);',
+                ].join('\n'),
                 language: 'javascript', // fallback syntax
                 theme: 'vs-dark'
             });
-            
-            editor.onDidChangeModelContent(() => {
-                runCode();
-            });
-            
-            initPyodide().then(() => runCode());
+
+            editor.onDidChangeModelContent(scheduleRun);
+            initPyodide().then(runCode);
         });
     </script>
 </body>

@@ -1,19 +1,84 @@
 import sys
+import os
 import argparse
 import json
 from uncertain.parser import parse, ParseError
 from uncertain.lexer import LexerError
-from uncertain.typechecker import TypeContext, check_stmt
-from uncertain.diagnostics import format_diagnostic
+from uncertain.ast_nodes import Span
+from uncertain.typechecker import TypeContext, check_program
+from uncertain.diagnostics import Diagnostic, KINDS, format_diagnostic, diagnostic_message
+from uncertain.output import format_value, to_json
 
-ERROR_CATALOG = {
-    "uncertain-reuse": "This error occurs when the same uncertain variable is used in both operands of an operation (+, -, *, /) without explicitly accounting for their correlation. Because the type checker assumes independence by default, reusing variables leads to incorrect variance calculations.",
-    "type-mismatch": "This error occurs when an explicitly provided type annotation does not match the distribution computed by the type checker.",
-    "undefined-var": "This error occurs when a variable is referenced before it has been assigned with a `let` statement.",
-    "math-domain-error": "This error occurs when an operation is mathematically undefined, such as dividing by a distribution with a zero mean, or taking the log of a negative number.",
-    "approximation-warning": "This warning occurs when non-Normal distributions are combined using operations like addition or multiplication. The system uses a moment-matching approximation to compute the resulting mean and variance, which may not perfectly capture the true distribution shape.",
-    "uncertain-branch": "This error occurs when a conditional statement (if, while, for) depends on an uncertain value. Control flow must be deterministic at compile-time."
-}
+ERROR_CATALOG = {kind: info.explanation for kind, info in KINDS.items()}
+
+def get_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("uncertain-lang")
+    except Exception:
+        return "unknown"
+
+def _diag_json(diag: Diagnostic, source_lines: list[str]) -> dict:
+    return {
+        "kind": diag.kind,
+        "severity": diag.severity,
+        "line": diag.span.line,
+        "col": diag.span.col,
+        "message": diagnostic_message(diag),
+        "rendered": format_diagnostic(diag, source_lines),
+    }
+
+def run(args) -> int:
+    """Check (and print) one program. Returns the process exit code."""
+    json_out = args.output == "json"
+
+    try:
+        with open(args.file, "r", encoding="utf-8") as f:
+            source = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        msg = f"Error reading {args.file}: {e}"
+        print(json.dumps({"status": "failed", "diagnostics": [{"kind": "io-error", "severity": "error", "message": msg}]}) if json_out else msg)
+        return 1
+    source_lines = source.splitlines()
+
+    try:
+        stmts, expr = parse(source)
+        ctx = TypeContext(max_unroll=args.max_unroll, base_dir=os.path.dirname(os.path.abspath(args.file)))
+        all_diags = check_program(stmts, ctx, expr)
+    except (ParseError, LexerError) as e:
+        stmts, expr, ctx = [], None, None
+        all_diags = [Diagnostic("syntax-error", Span(e.line, e.col, 1), extra={"msg": str(e)})]
+
+    errors = [d for d in all_diags if d.severity == "error"]
+    warnings = [d for d in all_diags if d.severity == "warning"]
+    status = "failed" if errors else "passed"
+
+    if json_out:
+        out = {"status": status, "diagnostics": [_diag_json(d, source_lines) for d in all_diags]}
+        if not args.check_only and not errors:
+            out["values"] = {name: to_json(typ) for name, typ in ctx.bindings.items()}
+            if ctx.result is not None:
+                out["result"] = to_json(ctx.result)
+        print(json.dumps(out, indent=2))
+        return 1 if errors else 0
+
+    for diag in all_diags:
+        print(format_diagnostic(diag, source_lines))
+        print("")
+    if args.check_only:
+        if all_diags:
+            print(f"Typecheck finished: {len(warnings)} warnings, {len(errors)} errors.")
+        else:
+            print("Typecheck passed.")
+        return 1 if errors else 0
+    if errors:
+        return 1
+
+    for name, typ in ctx.bindings.items():
+        print(f"{name} = {format_value(typ)}")
+    if ctx.result is not None:
+        print(f"=> {format_value(ctx.result)}")
+    return 0
 
 def main():
     parser = argparse.ArgumentParser(description="Uncertain Lang CLI")
@@ -23,14 +88,15 @@ def main():
     parser.add_argument("--explain", type=str, help="Explain an error code")
     parser.add_argument("--max-unroll", type=int, default=1000, help="Maximum number of loop iterations to unroll (default 1000)")
     parser.add_argument("--lsp", action="store_true", help="Start the Language Server Protocol server")
-    
+    parser.add_argument("--version", action="version", version=f"uncertain {get_version()}")
+
     args = parser.parse_args()
-    
+
     if args.lsp:
         from uncertain.server import start_server
         start_server()
         sys.exit(0)
-        
+
     if args.explain:
         code = args.explain
         if code in ERROR_CATALOG:
@@ -40,79 +106,21 @@ def main():
         else:
             print(f"Unknown error code: {code}. Available codes: {', '.join(ERROR_CATALOG.keys())}")
         sys.exit(0)
-        
+
     if not args.file:
         parser.error("the following arguments are required: file")
-        
+    # Diagnostics echo source lines, which may contain characters the console can't encode (e.g. cp1252 on Windows)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+    if args.max_unroll < 0:
+        parser.error("--max-unroll must be >= 0")
+
     try:
-        with open(args.file, "r") as f:
-            source = f.read()
-    except Exception as e:
-        if args.output == "json":
-            print(json.dumps({"errors": [{"message": f"Error reading {args.file}: {e}"}]}))
-        else:
-            print(f"Error reading {args.file}: {e}")
-        sys.exit(1)
-        
-    try:
-        stmts, expr = parse(source)
-    except (ParseError, LexerError) as e:
-        if args.output == "json":
-            print(json.dumps({"errors": [{"message": str(e)}]}) )
-        else:
-            print(e)
-        sys.exit(1)
-        
-    ctx = TypeContext(max_unroll=args.max_unroll)
-    all_diags = []
-    
-    for stmt in stmts:
-        diags = check_stmt(stmt, ctx)
-        all_diags.extend(diags)
-        
-    if all_diags:
-        source_lines = source.splitlines()
-        errors = [d for d in all_diags if d.severity == "error"]
-        warnings = [d for d in all_diags if d.severity == "warning"]
-        
-        if args.output == "json":
-            diag_out = []
-            for diag in all_diags:
-                diag_out.append({
-                    "kind": diag.kind,
-                    "severity": diag.severity,
-                    "line": diag.span.line,
-                    "col": diag.span.col,
-                    "message": format_diagnostic(diag, source_lines)
-                })
-            print(json.dumps({"diagnostics": diag_out}))
-            if errors:
-                sys.exit(1)
-        else:
-            for diag in all_diags:
-                print(format_diagnostic(diag, source_lines))
-                print("")
-            if args.check_only:
-                print(f"Typecheck finished: {len(warnings)} warnings, {len(errors)} errors.")
-            if errors:
-                sys.exit(1)
-        
-    if args.check_only:
-        if args.output == "text":
-            print("Typecheck passed." if not all_diags else "")
-        else:
-            if not all_diags:
-                print(json.dumps({"status": "passed"}))
-        sys.exit(0)
-        
-    if args.output == "json":
-        out = {}
-        for name, typ in ctx.bindings.items():
-            out[name] = {"mean": typ.dist.mean, "stddev": typ.dist.stddev, "family": typ.dist.family}
-        print(json.dumps(out, indent=2))
-    else:
-        for name, typ in ctx.bindings.items():
-            print(f"{name} = (mean={typ.dist.mean:.4f}, stddev={typ.dist.stddev:.4f})")
-            
+        sys.exit(run(args))
+    except Exception as e:  # last-resort guard: never show a raw traceback
+        print(f"internal error: {type(e).__name__}: {e}\nThis is a bug in Uncertain; please report it.", file=sys.stderr)
+        sys.exit(2)
+
 if __name__ == "__main__":
     main()

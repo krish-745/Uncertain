@@ -1,0 +1,4 @@
+a = (mean=10.0000, stddev=1.0000)
+variance_est = (mean=101.0000, stddev=20.0499)
+diff = (mean=0.0000, stddev=0.0000)
+same = (mean=101.0000, stddev=20.0499)

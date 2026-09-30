@@ -74,6 +74,29 @@ error: undefined variable `x`
 
 ---
 
+## `immutable-assign` (error)
+
+A variable declared with `let` (or a function parameter, or an imported module) was reassigned. Declare the variable with `var` if it needs to change, e.g. a loop counter or an accumulator.
+
+**Example:**
+```calc
+let total = 0;
+total = total + sensor_read();
+```
+
+**Diagnostic Output:**
+```text
+error: cannot assign twice to an immutable variable
+  --> line 2:1
+   |
+ 2 | total = total + sensor_read();
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign
+   |
+   = note: cannot assign twice to `total`: it was declared with `let` (or is a function parameter or module); declare it with `var total = ...` to allow reassignment
+```
+
+---
+
 ## `math-domain-error` (error)
 
 An operation is mathematically undefined or cannot be represented, such as dividing by a distribution with a zero mean, taking the log of a non-positive mean, a numeric overflow, or distribution parameters outside their valid range (e.g. `poisson_read(-1)`).

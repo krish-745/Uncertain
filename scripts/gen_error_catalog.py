@@ -19,6 +19,7 @@ EXAMPLES = {
     "syntax-error": "let a = sensor_read(;",
     "type-mismatch": "let reading: Measured<Normal(10.0, 2.0)> = sensor_read();",
     "undefined-var": "let y = x + 1.0;",
+    "immutable-assign": "let total = 0;\ntotal = total + sensor_read();",
     "math-domain-error": "let a = sensor_read() - 15.0;\nlet b = sqrt(a);",
     "approximation-warning": "let u = uniform_read();\nlet n = sensor_read();\nlet c = u * n;",
     "delta-method-warning": "let a = normal_read(1.0, 2.0);\nlet b = 10.0 / a;",

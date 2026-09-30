@@ -12,17 +12,21 @@
 </p>
 
 ```calc
-let width  = sensor_read();          // Normal(10, 1): a measurement with noise
-let area   = width * width;          // the compiler knows both factors are the same variable
-let p_big  = prob(area > 110);       // probability, computed at compile time
+let width  = sensor_read();              // Normal(10, 1): a measurement with noise
+let height = sensor_read();              // a second, independent measurement
+let area   = width * width;              // same variable twice: the correlation is tracked
+let p_wide = prob(width > height + 1);   // probability, computed at compile time
 ```
 
 ```text
 $ uncertain area.calc
 width = (mean=10.0000, stddev=1.0000)
+height = (mean=10.0000, stddev=1.0000)
 area = (mean=101.0000, stddev=20.0499)
-p_big = (mean=0.3268, stddev=0.0000)
+p_wide = (mean=0.2398, stddev=0.0000)
 ```
+
+<p align="center"><b><a href="https://krish-745.github.io/Uncertain/">▶ Try it in your browser</a></b>, no install needed.</p>
 
 Values in `Uncertain` are probability distributions, not single numbers. The type checker tracks each value's mean, standard deviation and **correlation with every other value**, so reusing a variable, as in `width * width`, gives the mathematically correct answer instead of silently understating the uncertainty.
 
@@ -91,9 +95,12 @@ let temp      = normal_read(21.5, 0.8);
 let threshold = 23.0;
 let p_hot     = prob(temp > threshold);   // 0.0304
 let p_warm    = prob(temp - 21.5 >= 1);   // 0.1056
+
+let arrivals  = poisson_read(3);
+let p_busy    = prob(arrivals >= 5);      // 0.1847
 ```
 
-`prob()` accepts `<`, `>`, `<=` and `>=`. It computes the distribution of the difference between both sides, including any correlation between them, and evaluates the normal CDF.
+`prob()` accepts `<`, `>`, `<=` and `>=`, and takes any correlation between the two sides into account. The result is **exact** when the comparison is a linear combination of Normal readings, or depends on a single reading of any family (using that family's exact CDF, including discrete ones). Otherwise, for example for `prob(a * b > 110)`, it uses a normal approximation and emits a warning explaining why.
 
 ### Mistakes are caught before anything runs
 
@@ -136,11 +143,13 @@ error: type annotation mismatch
 
 ```calc
 let g = 9.81;                    // numbers: 1, 1.5, .5, 1e-3
-var count = 0;                   // `var` signals the value will be reassigned
+var count = 0;                   // `var` can be reassigned...
 count = count + 1;
-let noisy = normal_read(0, 2);   // an uncertain value
+let noisy = normal_read(0, 2);   // ...`let` cannot: `noisy = 0;` is an error
 // comments start with //
 ```
+
+Use `let` for values that never change, and `var` for counters and accumulators. Reassigning a `let` (or a function parameter) is an `immutable-assign` error. Declaring a name again with `let` or `var` is allowed and shadows the old value.
 
 A value with standard deviation 0 is *deterministic*. Deterministic values can be used anywhere; uncertain values are rejected where a fixed number is required (loop conditions, array indices, distribution parameters).
 
@@ -248,7 +257,12 @@ let total    = reduce(scaled, add, 0.0);    // (mean=60, stddev=3.4641)
 let large    = filter([10, 20, 30], is_large);   // [20, 30]
 ```
 
-Functions are evaluated at every call site during type checking, and argument and return annotations are checked on each call. `map` and `filter` take a one-argument function, `reduce` a two-argument function and an initial value. Recursion works as long as it stops after a bounded number of deterministic steps (at most 64 nested calls).
+Functions are evaluated at every call site during type checking, and argument and return annotations are checked on each call.
+
+- **Scope:** functions are lexically scoped. They see the variables of the scope they were defined in, not the caller's.
+- **Outer variables:** a function can update an outer `var`, but not an outer `let`. Its parameters are immutable.
+- **Higher-order functions:** `map` and `filter` take a one-argument function, `reduce` a two-argument function and an initial value.
+- **Recursion:** works as long as it stops after a bounded number of deterministic steps (at most 64 nested calls).
 
 ### Modules
 
@@ -256,15 +270,21 @@ Functions are evaluated at every call site during type checking, and argument an
 // physics.calc
 let g = 9.81;
 let drag = normal_read(0.47, 0.02);
+
+fn weight(mass) {
+    return mass * g;
+}
 ```
 
 ```calc
 // main.calc
 import physics as phys;                     // resolved relative to main.calc
-let weight = 70 * phys.g;
+let w  = phys.weight(70);                   // call a module function
+let d  = phys.drag;                         // read a module value
+let ws = map([50, 70, 90], phys.weight);    // module functions work with map/filter/reduce
 ```
 
-An import exposes the module's top-level values as a struct. Nested paths such as `import lib.physics as p;` load `lib/physics.calc`.
+An import exposes the module's top-level values and functions. Module functions run in the module's own scope. Readings from a module stay correlated wherever they are used (`phys.drag - phys.drag` is exactly 0). Nested paths such as `import lib.physics as p;` load `lib/physics.calc`.
 
 ---
 
@@ -274,6 +294,7 @@ An import exposes the module's top-level values as a struct. Nested paths such a
 |---|---|
 | `syntax-error` | the source could not be parsed |
 | `undefined-var` | a variable is used before it is declared |
+| `immutable-assign` | a `let` variable or function parameter is reassigned |
 | `type-mismatch` | a `Measured<...>` annotation does not match the inferred distribution |
 | `math-domain-error` | an undefined operation or invalid distribution parameters |
 | `uncertain-branch` | a condition or comparison depends on an uncertain value |
@@ -326,7 +347,7 @@ vim.api.nvim_create_autocmd({ "BufEnter" }, {
 
 ### Browser playground
 
-[`docs/playground.html`](https://github.com/krish-745/Uncertain/blob/main/docs/playground.html) runs the compiler in the browser via Pyodide, with no install. From a clone of the repository:
+**[krish-745.github.io/Uncertain](https://krish-745.github.io/Uncertain/)** runs the compiler in your browser via Pyodide, with no install. It offers syntax highlighting, inline errors, example programs and shareable links. To run it from a clone of the repository instead:
 
 ```bash
 python -m http.server 8000
@@ -351,10 +372,9 @@ Because everything is computed from the program text, loops and branches are unr
 
 ### Limitations
 
-- **Distribution shape:** the compiler tracks means, variances and covariances, not full distribution shapes. After a nonlinear operation, results are summarised by their moments, and `prob()` assumes the compared difference is normal.
+- **Distribution shape:** the compiler tracks means, variances and covariances, not full distribution shapes. After a nonlinear operation, results are summarised by their moments, and `prob()` on such a result is a normal approximation (with a warning).
 - **Control flow:** it must be deterministic. You can't branch on uncertain values (by design).
-- **Variables:** `let` and `var` currently behave identically; the distinction documents intent but reassigning a `let` is not yet an error.
-- **Function scope:** functions see the caller's variables (dynamic scope), and functions defined in an imported module are not exported, only its values.
+- **Scale:** everything is evaluated at compile time, so very long loops or deep recursion hit the `--max-unroll` and recursion limits.
 
 ---
 
@@ -385,6 +405,7 @@ The test suite includes:
 - unit and regression tests for every language feature;
 - property-based fuzzing (via Hypothesis) of the lexer, parser and whole programs, checking that the compiler never crashes;
 - Monte Carlo cross-checks of every analytic formula and of correlations through nonlinear functions;
+- exact probabilities checked against sampling;
 - golden tests of the rendered diagnostics;
 - tests of the language server.
 

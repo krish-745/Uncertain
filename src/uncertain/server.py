@@ -86,9 +86,18 @@ def hover_text(ctx: TypeContext, source: str, line: int, character: int) -> Opti
     if typ is not None:
         family = f" ({typ.dist.family})" if hasattr(typ.dist, "family") else ""
         return f"**{name}**{family}: `{format_value(typ)}`"
-    fn = ctx.lookup_fn(path[0]) if len(path) == 1 else None
-    if fn is not None:
-        return f"**fn {fn.name}**({', '.join(a.name for a in fn.args)})"
+    closure = None
+    if len(path) == 1:
+        closure = ctx.lookup_fn(path[0])
+    else:
+        module = ctx.lookup(path[0])
+        for field in path[1:-1]:
+            module = module.dist.get(field) if module is not None and isinstance(module.dist, dict) else None
+        if module is not None:
+            closure = module.functions.get(path[-1])
+    if closure is not None:
+        fn = closure.fn
+        return f"**fn {name}**({', '.join(a.name for a in fn.args)})"
     return None
 
 @server.feature(lsp.TEXT_DOCUMENT_DID_OPEN)

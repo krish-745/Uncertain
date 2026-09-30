@@ -1,4 +1,5 @@
 import math
+from typing import Optional
 from dataclasses import dataclass
 
 class MathDomainError(Exception):
@@ -201,3 +202,129 @@ def empirical(values: list[float]) -> Dist:
     mean = sum(values) / len(values)
     stddev = math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
     return Dist(mean, stddev, "Empirical")
+
+# --- Exact probabilities ---------------------------------------------------------
+
+CONTINUOUS_FAMILIES = ("Normal", "Uniform", "LogNormal", "Gamma", "Exponential")
+DISCRETE_FAMILIES = ("Poisson", "Binomial", "Bernoulli", "Geometric", "NegativeBinomial", "Empirical")
+
+def _gamma_p(a: float, x: float) -> float:
+    """Regularized lower incomplete gamma function P(a, x)."""
+    if x <= 0:
+        return 0.0
+    log_prefix = a * math.log(x) - x - math.lgamma(a)
+    if x < a + 1.0:
+        # series expansion
+        term = total = 1.0 / a
+        n = a
+        for _ in range(10_000):
+            n += 1.0
+            term *= x / n
+            total += term
+            if abs(term) < abs(total) * 1e-16:
+                break
+        return min(1.0, total * math.exp(log_prefix))
+    # continued fraction for Q(a, x) (modified Lentz)
+    tiny = 1e-300
+    b = x + 1.0 - a
+    c = 1.0 / tiny
+    d = 1.0 / b
+    h = d
+    for i in range(1, 10_000):
+        an = -i * (i - a)
+        b += 2.0
+        d = an * d + b
+        d = tiny if abs(d) < tiny else d
+        c = b + an / c
+        c = tiny if abs(c) < tiny else c
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-16:
+            break
+    return max(0.0, 1.0 - math.exp(log_prefix) * h)
+
+def _discrete_cdf(pmf_log, k_max: int, mean: float) -> float:
+    """Σ_{k=0}^{k_max} pmf(k), stopping once the remaining terms are negligible."""
+    if k_max < 0:
+        return 0.0
+    total = 0.0
+    for k in range(k_max + 1):
+        term = math.exp(pmf_log(k))
+        total += term
+        if k > mean and term < total * 1e-17:
+            break
+    return min(1.0, total)
+
+def _cdf(family: str, params: list[float], t: float, inclusive: bool, values: Optional[list[float]] = None) -> float:
+    """P(X <= t) if inclusive else P(X < t)."""
+    if family == "Empirical":
+        vals = values or []
+        return sum(1 for v in vals if (v <= t if inclusive else v < t)) / len(vals)
+
+    if family in CONTINUOUS_FAMILIES:
+        if family == "Normal":
+            mu, sigma = params
+            return 1.0 if t >= mu and sigma == 0 else 0.0 if sigma == 0 else _phi((t - mu) / sigma)
+        if family == "Uniform":
+            lo, hi = params
+            return 0.0 if t <= lo else 1.0 if t >= hi else (t - lo) / (hi - lo)
+        if family == "LogNormal":
+            mu, sigma = params
+            return 0.0 if t <= 0 else _phi((math.log(t) - mu) / sigma)
+        if family == "Gamma":
+            k, theta = params
+            return _gamma_p(k, t / theta)
+        if family == "Exponential":
+            lam = params[0]
+            return 0.0 if t <= 0 else -math.expm1(-lam * t)
+
+    # Integer-valued families: P(X < t) = P(X <= ceil(t) - 1)
+    k_max = math.floor(t) if inclusive else math.ceil(t) - 1
+    if k_max < 0:
+        return 0.0
+    if family == "Poisson":
+        lam = params[0]
+        if lam == 0:
+            return 1.0
+        return _discrete_cdf(lambda k: k * math.log(lam) - lam - math.lgamma(k + 1), k_max, lam)
+    if family in ("Binomial", "Bernoulli"):
+        n, p = (params[0], params[1]) if family == "Binomial" else (1, params[0])
+        n = int(n)
+        if k_max >= n:
+            return 1.0
+        if p in (0.0, 1.0):
+            return 1.0 if p == 0.0 or k_max >= n else 0.0
+        log_p, log_q = math.log(p), math.log1p(-p)
+        return _discrete_cdf(lambda k: math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1) + k * log_p + (n - k) * log_q,
+                             k_max, n * p)
+    if family == "Geometric":
+        p = params[0]
+        return 0.0 if k_max < 1 else -math.expm1(k_max * math.log1p(-p)) if p < 1 else 1.0
+    if family == "NegativeBinomial":
+        r, p = params
+        if p == 0:
+            return 1.0
+        log_p, log_q = math.log(p), math.log1p(-p)
+        return _discrete_cdf(lambda k: math.lgamma(k + r) - math.lgamma(k + 1) - math.lgamma(r) + k * log_p + r * log_q,
+                             k_max, p * r / (1 - p))
+    raise MathDomainError(f"no exact probability available for the {family} family")
+
+def probability(family: str, params: list[float], op: str, t: float, values: Optional[list[float]] = None) -> float:
+    """Exact P(X op t) for a named distribution; op is one of <, <=, >, >=."""
+    if family in DISCRETE_FAMILIES:
+        # snap thresholds that are integers up to floating-point noise, e.g. 2.9999999999
+        nearest = round(t)
+        if abs(t - nearest) < 1e-9 * max(1.0, abs(t)):
+            t = float(nearest)
+    if op == "<":
+        p = _cdf(family, params, t, inclusive=False, values=values)
+    elif op == "<=":
+        p = _cdf(family, params, t, inclusive=True, values=values)
+    elif op == ">":
+        p = 1.0 - _cdf(family, params, t, inclusive=True, values=values)
+    elif op == ">=":
+        p = 1.0 - _cdf(family, params, t, inclusive=False, values=values)
+    else:
+        raise MathDomainError(f"unsupported comparison '{op}'")
+    return min(1.0, max(0.0, p))

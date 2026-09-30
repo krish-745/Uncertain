@@ -43,3 +43,11 @@ def test_hover_shows_distribution():
     text = server.hover_text(ctx, source, 2, 10)  # `x` in `s.x`
     assert "**s.x**" in text
     assert server.hover_text(ctx, source, 0, 1) is None  # `let` keyword
+
+def test_hover_on_module_function(tmp_path):
+    (tmp_path / "geo.calc").write_text("fn area(r) { return 3.14 * square(r); }")
+    source = "import geo as g;\nlet a = g.area(2);"
+    uri = (tmp_path / "main.calc").as_uri()
+    server.check_document(StubServer(), uri, source)
+    ctx = server._contexts[uri]
+    assert server.hover_text(ctx, source, 1, 11) == "**fn g.area**(r)"

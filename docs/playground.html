@@ -1,96 +1,266 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Uncertain Lang Playground</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Uncertain Playground</title>
+    <meta name="description" content="Try the Uncertain language in your browser: every number carries its uncertainty, and the compiler propagates it exactly.">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; display: flex; height: 100vh; font-family: sans-serif; }
-        #editor { width: 50%; height: 100%; border-right: 1px solid #ccc; }
-        #output-panel { width: 50%; height: 100%; padding: 20px; box-sizing: border-box; background: #f5f5f5; overflow-y: auto; }
-        pre { white-space: pre-wrap; margin: 0; }
-        .error { color: #c00; }
+        :root {
+            --bg: #1e1e1e; --panel: #181818; --border: #333; --text: #d4d4d4; --muted: #8b8b8b;
+            --accent: #c586c0; --error: #f48771; --warning: #cca700; --ok: #89d185;
+        }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+                     font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+        body { display: flex; flex-direction: column; }
+        header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                 padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+        header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+        header h1 span { color: var(--accent); }
+        header .spacer { flex: 1; }
+        header a { color: var(--muted); text-decoration: none; font-size: 13px; }
+        header a:hover { color: var(--text); }
+        select, button { background: #2d2d2d; color: var(--text); border: 1px solid var(--border);
+                         border-radius: 4px; padding: 4px 8px; font-size: 13px; cursor: pointer; }
+        button:hover, select:hover { border-color: #555; }
+        main { flex: 1; display: flex; min-height: 0; }
+        #editor { flex: 1 1 55%; min-width: 0; }
+        #output-panel { flex: 1 1 45%; min-width: 0; display: flex; flex-direction: column;
+                        border-left: 1px solid var(--border); background: var(--panel); }
+        #status { padding: 8px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); }
+        #status.ok { color: var(--ok); } #status.error { color: var(--error); } #status.warning { color: var(--warning); }
+        #output { flex: 1; overflow: auto; margin: 0; padding: 12px 16px; white-space: pre-wrap;
+                  font: 13px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; }
+        .diag-error { color: var(--error); } .diag-warning { color: var(--warning); } .value-name { color: #9cdcfe; }
+        @media (max-width: 800px) {
+            main { flex-direction: column; }
+            #editor { flex: 1 1 55%; }
+            #output-panel { border-left: none; border-top: 1px solid var(--border); }
+            header { padding: 8px 12px; }
+        }
     </style>
 </head>
 <body>
-    <div id="editor"></div>
-    <div id="output-panel">
-        <h3>Output & Diagnostics</h3>
-        <pre id="output">Loading Pyodide...</pre>
-    </div>
+    <header>
+        <h1><span>Uncertain</span> Playground</h1>
+        <select id="examples" aria-label="Load an example"></select>
+        <button id="share" title="Copy a link to this program">Share</button>
+        <div class="spacer"></div>
+        <a href="https://github.com/krish-745/Uncertain#readme" target="_blank" rel="noopener">Docs</a>
+        <a href="https://github.com/krish-745/Uncertain/blob/main/docs/error-catalog.md" target="_blank" rel="noopener">Errors</a>
+        <a href="https://github.com/krish-745/Uncertain" target="_blank" rel="noopener">GitHub</a>
+    </header>
+    <main>
+        <div id="editor"></div>
+        <section id="output-panel">
+            <div id="status">Loading Python (Pyodide)...</div>
+            <pre id="output"></pre>
+        </section>
+    </main>
 
     <script>
         // By default the latest release is installed from PyPI. To try a local build, serve the
         // repository root and open docs/playground.html?wheel=../dist/<wheel file name>.whl
         const WHEEL = new URLSearchParams(window.location.search).get("wheel") || "uncertain-lang";
 
-        let pyodide;
-        let editor;
-        let runTimer;
+        const EXAMPLES = {
+            "Correlation tracking": [
+                "// Values are distributions; the compiler tracks how they depend on each other.",
+                "let width  = sensor_read();        // Normal(10, 1)",
+                "let height = sensor_read();        // an independent reading",
+                "",
+                "let area    = width * width;       // same variable twice: exact (mean 101)",
+                "let diff    = width - width;       // exactly 0",
+                "let product = width * height;      // independent factors",
+                "let p_wide  = prob(width > height + 1);",
+            ].join("\n"),
+            "Probability queries": [
+                "let temp = normal_read(21.5, 0.8);",
+                "let p_hot = prob(temp > 23);             // exact normal CDF",
+                "",
+                "let arrivals = poisson_read(3);",
+                "let p_busy = prob(arrivals >= 5);        // exact Poisson CDF",
+                "",
+                "let a = sensor_read();",
+                "let b = sensor_read();",
+                "let p_product = prob(a * b > 110);       // approximate: warns why",
+            ].join("\n"),
+            "Distributions": [
+                "let price: Measured<LogNormal(1, 0.5)>  = lognormal_read(1, 0.5);",
+                "let wear:  Measured<Gamma(2, 2.5)>      = gamma_read(2, 2.5);",
+                "let hits:  Measured<Binomial(100, 0.9)> = binomial_read(100, 0.9);",
+                "let data:  Measured<Empirical([-1.5, 2, 4.5])> = empirical_read([-1.5, 2, 4.5]);",
+                "",
+                "let total = price * 10 + wear;",
+            ].join("\n"),
+            "Functions & arrays": [
+                "fn scale(v: Measured<Normal(10, 1)>) -> Measured<Normal(20, 2)> {",
+                "    return v * 2.0;",
+                "}",
+                "",
+                "fn add(total, v) {",
+                "    return total + v;",
+                "}",
+                "",
+                "let readings = [sensor_read(), sensor_read(), sensor_read()];",
+                "let scaled = map(readings, scale);",
+                "let total = reduce(scaled, add, 0.0);",
+                "total",
+            ].join("\n"),
+            "Loops & branches": [
+                "let readings = [sensor_read(), sensor_read(), normal_read(12, 2)];",
+                "var total = 0;",
+                "",
+                "for (var i = 0; i < 3; i = i + 1) {",
+                "    if (i != 1) {",
+                "        total = total + readings[i];",
+                "    }",
+                "}",
+                "",
+                "// Branching on an uncertain value is a compile error:",
+                "// if (total > 20) { ... }   -> use prob(total > 20) instead",
+            ].join("\n"),
+            "Errors caught at compile time": [
+                "let a = sensor_read() - 15.0;",
+                "let b = sqrt(a);                  // negative mean",
+                "",
+                "let n = poisson_read(-1);         // invalid parameter",
+                "",
+                "let limit = 10;",
+                "limit = 20;                       // `let` is immutable; use `var`",
+                "",
+                "let reading: Measured<Normal(10, 2)> = sensor_read();   // wrong annotation",
+            ].join("\n"),
+        };
 
         const PYTHON_CHECK = `
 import json
 from uncertain.parser import parse, ParseError
 from uncertain.lexer import LexerError
 from uncertain.typechecker import TypeContext, check_program
-from uncertain.diagnostics import format_diagnostic
+from uncertain.diagnostics import format_diagnostic, diagnostic_message
 from uncertain.output import format_value
 
 def check_code(source):
+    lines = source.splitlines()
     try:
         stmts, expr = parse(source)
     except (ParseError, LexerError) as e:
-        return json.dumps({"status": "error", "message": str(e)})
+        return json.dumps({"diagnostics": [{"severity": "error", "kind": "syntax-error", "line": max(1, e.line),
+                                            "col": max(1, e.col), "length": 1, "message": str(e), "rendered": str(e)}],
+                           "values": []})
 
     ctx = TypeContext()
-    all_diags = check_program(stmts, ctx, expr)
-    errors = [d for d in all_diags if d.severity == "error"]
-
-    out = ""
-    source_lines = source.splitlines()
-    for diag in all_diags:
-        out += format_diagnostic(diag, source_lines) + "\\n\\n"
-
-    if not errors:
-        if not all_diags:
-            out += "Typecheck passed.\\n\\n"
-        for name, typ in ctx.bindings.items():
-            out += f"{name} = {format_value(typ)}\\n"
+    diags = check_program(stmts, ctx, expr)
+    out = []
+    for d in diags:
+        length = d.span.length
+        if length <= 0 and 0 < d.span.line <= len(lines):
+            length = max(1, len(lines[d.span.line - 1]) - d.span.col + 1)
+        out.append({"severity": d.severity, "kind": d.kind, "line": d.span.line, "col": d.span.col,
+                    "length": max(1, length), "message": diagnostic_message(d),
+                    "rendered": format_diagnostic(d, lines)})
+    values = []
+    if not any(d.severity == "error" for d in diags):
+        values = [[name, format_value(typ)] for name, typ in ctx.bindings.items()]
         if ctx.result is not None:
-            out += f"=> {format_value(ctx.result)}\\n"
-
-    return json.dumps({"status": "ok", "output": out})
+            values.append(["=>", format_value(ctx.result)])
+    return json.dumps({"diagnostics": out, "values": values})
 `;
 
-        async function initPyodide() {
-            const outEl = document.getElementById("output");
-            pyodide = await loadPyodide();
-            await pyodide.loadPackage("micropip");
-            const micropip = pyodide.pyimport("micropip");
-            try {
-                // deps=False: the language-server dependency (pygls) isn't needed in the browser
-                await micropip.install.callKwargs(WHEEL, { deps: false });
-                pyodide.runPython(PYTHON_CHECK);
-                outEl.textContent = "Ready! Type some code...";
-            } catch (e) {
-                pyodide = null;
-                outEl.textContent = "Error loading uncertain lang: " + e;
+        let pyodide, editor, checkCode, runTimer;
+        const statusEl = document.getElementById("status");
+        const outputEl = document.getElementById("output");
+
+        function setStatus(text, cls) {
+            statusEl.textContent = text;
+            statusEl.className = cls || "";
+        }
+
+        function encodeProgram(code) {
+            return btoa(String.fromCharCode(...new TextEncoder().encode(code)));
+        }
+        function decodeProgram(b64) {
+            return new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+        }
+        function initialProgram() {
+            const hash = window.location.hash.slice(1);
+            if (hash.startsWith("code=")) {
+                try { return decodeProgram(decodeURIComponent(hash.slice(5))); } catch (e) { /* fall through */ }
             }
+            return EXAMPLES["Correlation tracking"];
+        }
+
+        function registerLanguage() {
+            monaco.languages.register({ id: "calc" });
+            monaco.languages.setMonarchTokensProvider("calc", {
+                keywords: ["let", "var", "fn", "return", "if", "else", "while", "for", "import", "as"],
+                types: ["Measured", "Normal", "Uniform", "Exact", "Empirical", "LogNormal", "Poisson", "Binomial",
+                        "Gamma", "Bernoulli", "NegativeBinomial", "Geometric", "Exponential"],
+                builtins: ["prob", "square", "sqrt", "abs", "log", "exp", "sin", "cos", "pow", "correlated", "map",
+                           "filter", "reduce", "sensor_read", "uniform_read", "normal_read", "lognormal_read",
+                           "poisson_read", "binomial_read", "gamma_read", "bernoulli_read", "negbinom_read",
+                           "geometric_read", "exponential_read", "empirical_read"],
+                tokenizer: {
+                    root: [
+                        [/\/\/.*$/, "comment"],
+                        [/(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/, "number"],
+                        [/[A-Za-z_]\w*/, { cases: { "@keywords": "keyword", "@types": "type", "@builtins": "predefined", "@default": "identifier" } }],
+                        [/[<>]=?|==|!=|->|[-+*\/=]/, "operator"],
+                    ],
+                },
+            });
+            monaco.languages.setLanguageConfiguration("calc", {
+                comments: { lineComment: "//" },
+                brackets: [["{", "}"], ["[", "]"], ["(", ")"]],
+                autoClosingPairs: [{ open: "{", close: "}" }, { open: "[", close: "]" }, { open: "(", close: ")" }],
+            });
+        }
+
+        function render(result) {
+            const model = editor.getModel();
+            monaco.editor.setModelMarkers(model, "uncertain", result.diagnostics.map(d => ({
+                severity: d.severity === "error" ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+                message: d.message,
+                code: d.kind,
+                startLineNumber: d.line, startColumn: d.col,
+                endLineNumber: d.line, endColumn: d.col + d.length,
+            })));
+
+            outputEl.textContent = "";
+            for (const d of result.diagnostics) {
+                const el = document.createElement("div");
+                el.className = d.severity === "error" ? "diag-error" : "diag-warning";
+                el.textContent = d.rendered + "\n\n";
+                outputEl.appendChild(el);
+            }
+            for (const [name, value] of result.values) {
+                const row = document.createElement("div");
+                const nameEl = document.createElement("span");
+                nameEl.className = "value-name";
+                nameEl.textContent = name === "=>" ? "=> " : name + " = ";
+                row.appendChild(nameEl);
+                row.appendChild(document.createTextNode(value));
+                outputEl.appendChild(row);
+            }
+
+            const errors = result.diagnostics.filter(d => d.severity === "error").length;
+            const warnings = result.diagnostics.length - errors;
+            if (errors) setStatus(`${errors} error(s), ${warnings} warning(s)`, "error");
+            else if (warnings) setStatus(`Checked, with ${warnings} warning(s)`, "warning");
+            else setStatus("Checked: no errors", "ok");
         }
 
         function runCode() {
-            if (!pyodide) return;
-            const outEl = document.getElementById("output");
+            if (!checkCode) return;
             try {
-                const checkCode = pyodide.globals.get("check_code");
-                const result = JSON.parse(checkCode(editor.getValue()));
-                checkCode.destroy();
-                outEl.className = result.status === "error" ? "error" : "";
-                outEl.textContent = result.status === "error" ? result.message : result.output;
+                render(JSON.parse(checkCode(editor.getValue())));
             } catch (e) {
-                outEl.className = "error";
-                outEl.textContent = e.toString();
+                setStatus("Internal error", "error");
+                outputEl.textContent = e.toString();
             }
         }
 
@@ -99,22 +269,67 @@ def check_code(source):
             runTimer = setTimeout(runCode, 300);
         }
 
-        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }});
-        require(['vs/editor/editor.main'], function() {
-            editor = monaco.editor.create(document.getElementById('editor'), {
-                value: [
-                    'let a = sensor_read();',
-                    'let b = a * 2.0;',
-                    'let c = a * b;        // correlation between a and b is tracked automatically',
-                    'let d = a - a;        // exactly 0 with 0 variance',
-                    'let p = prob(c > 200);',
-                ].join('\n'),
-                language: 'javascript', // fallback syntax
-                theme: 'vs-dark'
+        async function initPyodide() {
+            try {
+                pyodide = await loadPyodide();
+                await pyodide.loadPackage("micropip");
+                setStatus("Installing uncertain-lang...");
+                const micropip = pyodide.pyimport("micropip");
+                // deps=False: the language-server dependency (pygls) isn't needed in the browser
+                await micropip.install.callKwargs(WHEEL, { deps: false });
+                pyodide.runPython(PYTHON_CHECK);
+                checkCode = pyodide.globals.get("check_code");
+                const version = pyodide.runPython("from importlib.metadata import version; version('uncertain-lang')");
+                document.title = `Uncertain Playground (v${version})`;
+                runCode();
+            } catch (e) {
+                setStatus("Could not load the compiler", "error");
+                outputEl.textContent = String(e);
+            }
+        }
+
+        function setupControls() {
+            const select = document.getElementById("examples");
+            const placeholder = new Option("Examples...", "");
+            placeholder.disabled = true;
+            select.add(placeholder);
+            for (const name of Object.keys(EXAMPLES)) select.add(new Option(name, name));
+            select.value = "";
+            select.addEventListener("change", () => {
+                editor.setValue(EXAMPLES[select.value]);
+                history.replaceState(null, "", window.location.pathname + window.location.search);
+                select.value = "";
             });
 
+            const share = document.getElementById("share");
+            share.addEventListener("click", async () => {
+                const url = `${window.location.origin}${window.location.pathname}${window.location.search}#code=${encodeURIComponent(encodeProgram(editor.getValue()))}`;
+                history.replaceState(null, "", url);
+                try {
+                    await navigator.clipboard.writeText(url);
+                    share.textContent = "Link copied";
+                } catch (e) {
+                    share.textContent = "Link in address bar";
+                }
+                setTimeout(() => { share.textContent = "Share"; }, 2000);
+            });
+        }
+
+        require.config({ paths: { vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs" } });
+        require(["vs/editor/editor.main"], function () {
+            registerLanguage();
+            editor = monaco.editor.create(document.getElementById("editor"), {
+                value: initialProgram(),
+                language: "calc",
+                theme: "vs-dark",
+                automaticLayout: true,
+                minimap: { enabled: false },
+                fontSize: 14,
+                scrollBeyondLastLine: false,
+            });
             editor.onDidChangeModelContent(scheduleRun);
-            initPyodide().then(runCode);
+            setupControls();
+            initPyodide();
         });
     </script>
 </body>

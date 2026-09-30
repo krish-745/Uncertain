@@ -35,6 +35,13 @@ KINDS: dict[str, KindInfo] = {
         "variables must be declared with `let` or `var` before use.",
         "A variable is referenced (or assigned) before it has been declared with `let` or `var`.",
     ),
+    "immutable-assign": KindInfo(
+        "cannot assign twice to an immutable variable",
+        "cannot assign",
+        "variables declared with `let` cannot be reassigned; use `var` for values that change.",
+        "A variable declared with `let` (or a function parameter, or an imported module) was reassigned. "
+        "Declare the variable with `var` if it needs to change, e.g. a loop counter or an accumulator.",
+    ),
     "math-domain-error": KindInfo(
         "math domain error",
         "invalid operation",

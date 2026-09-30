@@ -334,26 +334,7 @@ class Parser:
         elif tok.type == "IDENT":
             self.advance()
             if self.match("LPAREN"):
-                args = []
-                kwargs = {}
-                if not self.match("RPAREN"):
-                    while True:
-                        is_kwarg = False
-                        if self.current() and self.current().type == "IDENT":
-                            if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].type == "EQUALS":
-                                kwarg_name = self.advance().value
-                                self.advance()
-                                kwarg_val = self.parse_expression()
-                                kwargs[kwarg_name] = kwarg_val
-                                is_kwarg = True
-
-                        if not is_kwarg:
-                            args.append(self.parse_expression())
-
-                        if not self.match("COMMA"):
-                            break
-                    self.expect("RPAREN", "Expected ')'")
-
+                args, kwargs = self.parse_call_args()
                 node = Call(tok.value, args, kwargs, self._span_from(tok))
             else:
                 node = VarRef(tok.value, _tok_span(tok))
@@ -403,9 +384,33 @@ class Parser:
                 if not self.current() or self.current().type != "IDENT":
                     raise self.error("Expected field name after '.'")
                 name_tok = self.advance()
-                node = FieldAccess(node, name_tok.value, _join(node.span, _tok_span(name_tok)))
+                if self.match("LPAREN"):
+                    # `module.function(...)`
+                    args, kwargs = self.parse_call_args()
+                    node = Call(name_tok.value, args, kwargs, _join(node.span, _tok_span(self.tokens[self.pos - 1])), target=node)
+                else:
+                    node = FieldAccess(node, name_tok.value, _join(node.span, _tok_span(name_tok)))
 
         return node
+
+    def parse_call_args(self) -> tuple[list[Expr], dict[str, Expr]]:
+        """Parse call arguments after the opening '(' up to and including the closing ')'."""
+        args = []
+        kwargs = {}
+        if self.match("RPAREN"):
+            return args, kwargs
+        while True:
+            tok = self.current()
+            if tok and tok.type == "IDENT" and self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].type == "EQUALS":
+                self.advance()
+                self.advance()
+                kwargs[tok.value] = self.parse_expression()
+            else:
+                args.append(self.parse_expression())
+            if not self.match("COMMA"):
+                break
+        self.expect("RPAREN", "Expected ')'")
+        return args, kwargs
 
 def parse(source: str) -> tuple[List[Stmt], Optional[Expr]]:
     tokens = tokenize(source)

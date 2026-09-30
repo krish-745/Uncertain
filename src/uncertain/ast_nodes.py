@@ -30,6 +30,7 @@ class Call:
     args: list["Expr"]
     kwargs: dict[str, "Expr"] # e.g. {"cov": NumberLit(...)}
     span: Span
+    target: "Expr | None" = None   # `m` in `m.f(x)`: a call to a function of an imported module
 
 @dataclass
 class NormalLit:

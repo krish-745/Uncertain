@@ -12,10 +12,10 @@ let area = width * length;
 // We can also calculate volume
 let volume = area * height;
 
-// Let's say we want the square of the height. 
-// Using `height * height` will throw a compiler error because we're reusing the same variable!
-// Instead, we use the mathematically safe `square()` function:
-let height_squared = square(height);
+// Squaring a measurement: the compiler knows both factors of `height * height`
+// are the same variable, so this equals `square(height)` exactly (mean 101, not 100).
+let height_squared = height * height;
+let same_thing = square(height);
 
 // And we can take the square root of a measurement
 let root_width = sqrt(width);

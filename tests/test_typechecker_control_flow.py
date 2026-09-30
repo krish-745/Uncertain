@@ -5,7 +5,7 @@ from uncertain.typechecker import check_stmt, TypeContext
 def test_if_stmt_deterministic():
     source = """
     let a = 10.0;
-    let b = 0.0;
+    var b = 0.0;
     if (a > 5.0) {
         b = 1.0;
     } else {
@@ -23,7 +23,7 @@ def test_if_stmt_deterministic():
 
 def test_while_stmt_deterministic():
     source = """
-    let a = 0.0;
+    var a = 0.0;
     while (a < 5.0) {
         a = a + 1.0;
     }
@@ -39,8 +39,8 @@ def test_while_stmt_deterministic():
 
 def test_for_stmt_deterministic():
     source = """
-    let b = 0.0;
-    for (let i = 0.0; i < 5.0; i = i + 1.0) {
+    var b = 0.0;
+    for (var i = 0.0; i < 5.0; i = i + 1.0) {
         b = b + 2.0;
     }
     """
@@ -57,7 +57,7 @@ def test_for_stmt_deterministic():
 def test_uncertain_branch_if():
     source = """
     let a = sensor_read();
-    let b = 0.0;
+    var b = 0.0;
     if (a > 5.0) {
         b = 1.0;
     }
@@ -72,7 +72,7 @@ def test_uncertain_branch_if():
 
 def test_uncertain_branch_while():
     source = """
-    let a = sensor_read();
+    var a = sensor_read();
     while (a < 20.0) {
         a = a + 1.0;
     }
@@ -87,7 +87,7 @@ def test_uncertain_branch_while():
 
 def test_loop_iteration_limit():
     source = """
-    let a = 0.0;
+    var a = 0.0;
     while (a < 1005.0) {
         a = a + 1.0;
     }

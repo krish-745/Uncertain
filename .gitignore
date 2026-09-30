@@ -152,8 +152,6 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# uv
-uv.lock
 
 # IDEs and Editors
 .vscode/
@@ -168,3 +166,4 @@ uncertainty-typed-language.md
 
 # Agent stuff
 .agents/
+skills-lock.json

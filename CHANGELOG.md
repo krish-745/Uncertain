@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0 (2026-09-30)
+
+**Language (breaking)**
+- **`let` is now immutable.** Reassigning a `let` variable, a function parameter or an imported module is an `immutable-assign` error; use `var` for values that change (loop counters, accumulators). Redeclaring a name is still allowed.
+- **Functions are lexically scoped.** A function sees the variables of the scope it was defined in, not its caller's. Functions can update outer `var`s.
+
+**Added**
+- **Module functions:** `import geometry as geo; geo.area(2)` calls a function defined in a module (in the module's own scope). Module functions can also be passed to `map`, `filter` and `reduce` (`map(xs, geo.area)`).
+- **Exact `prob()`:** exact for linear combinations of Normal readings, and for comparisons that depend on a single reading of any family. Uniform, LogNormal, Gamma, Exponential, Poisson, Binomial, Bernoulli, Geometric, NegativeBinomial and Empirical each use their exact CDF, including the strict/non-strict distinction for discrete families. Otherwise `prob()` warns that it is approximating and says why.
+- **Playground on GitHub Pages:** https://krish-745.github.io/Uncertain/, with syntax highlighting, inline errors, example programs and shareable links.
+- Hover in the language server now covers module functions (`geo.area`).
+
+**Fixed**
+- Approximation warnings were lost once a non-Normal value went through a linear operation (e.g. `(u + 0) * (u + 0)` for a Uniform `u`).
+- A `for` loop whose step statement fails no longer also reports a misleading `loop-limit` error.
+
+**Project**
+- `uv.lock` is now committed; `skills-lock.json` (unrelated tooling) is no longer tracked.
+
 ## 1.0.1 (2026-09-30)
 
 Documentation release; no changes to the compiler.

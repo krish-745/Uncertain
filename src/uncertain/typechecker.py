@@ -2,12 +2,12 @@ import difflib
 import math
 import operator
 import os
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from typing import Callable, Optional
 from uncertain.ast_nodes import *
 from uncertain.distributions import (
     Dist, MathDomainError, product, square, sqrt_dist, abs_dist, log_dist, exp_dist, sin_dist, cos_dist,
-    pow_const, moments, empirical, FAMILY_PARAMS,
+    pow_const, moments, empirical, probability, FAMILY_PARAMS,
 )
 from uncertain.diagnostics import Diagnostic, diagnostic_message
 from uncertain.dependency import AffineForm, get_cov, get_var, linear_comb_affine, scale_affine
@@ -16,6 +16,32 @@ from uncertain.dependency import AffineForm, get_cov, get_var, linear_comb_affin
 class MeasuredType:
     dist: Dist | tuple["MeasuredType", ...] | dict[str, "MeasuredType"]
     deps: AffineForm
+    # True if the value is exactly `mean + Σ coeff·ε` over its noise sources. False after a
+    # nonlinear operation (product, division, sqrt, ...), whose result is only summarised by moments.
+    linear: bool = field(default=True, compare=False)
+    # For module structs: the functions the module defines (name -> Closure)
+    functions: dict = field(default_factory=dict, compare=False)
+
+@dataclass(frozen=True)
+class Closure:
+    """A function together with the scope it was defined in (lexical scoping)."""
+    fn: FnDefStmt
+    env: "TypeContext"
+
+@dataclass(frozen=True)
+class NoiseSource:
+    """Where an independent noise source ε came from.
+
+    kind "read":     a `*_read()` call; the reading is X = mean + stddev·ε with the given family/params.
+    kind "residual": variance left over by a nonlinear operation (not normally distributed).
+    """
+    kind: str
+    family: Optional[str] = None
+    params: Optional[tuple] = None
+    values: Optional[tuple] = None   # data of an Empirical reading
+    dist: Optional[Dist] = None
+
+RESIDUAL = NoiseSource("residual")
 
 # Returned by `synth` after a diagnostic has been reported. Compared by identity, so that
 # operations on an erroneous value propagate the error silently instead of cascading.
@@ -24,7 +50,6 @@ ERROR_TYPE = MeasuredType(Dist(0.0, 0.0), {})
 DET_TOL = 1e-9            # stddev below which a value is treated as deterministic
 MAX_CALL_DEPTH = 64       # maximum nesting of user function calls
 DELTA_CV_LIMIT = 0.3      # coefficient of variation above which the delta method is flagged
-NORMAL_FAMILIES = ("Normal", "Exact")
 
 class _SharedState:
     """State shared by every scope of one program check, including imported modules."""
@@ -33,11 +58,13 @@ class _SharedState:
         self.next_id = 1
         self.call_depth = 0
         self.import_stack: list[str] = []
+        self.sources: dict[int, NoiseSource] = {}
 
 class TypeContext:
     def __init__(self, parent: "TypeContext" = None, max_unroll: int = 1000, base_dir: str = ".", shared: _SharedState = None):
         self.bindings: dict[str, MeasuredType] = {}
-        self.functions: dict[str, FnDefStmt] = {}
+        self.immutable: set[str] = set()              # names declared with `let` (or parameters, imports)
+        self.functions: dict[str, Closure] = {}
         self.parent = parent
         self.result: Optional[MeasuredType] = None   # type of the program's trailing expression, if any
         if parent is not None:
@@ -51,9 +78,10 @@ class TypeContext:
     def max_unroll(self) -> int:
         return self.shared.max_unroll
 
-    def get_next_id(self) -> int:
+    def new_source(self, source: NoiseSource) -> int:
         id = self.shared.next_id
         self.shared.next_id += 1
+        self.shared.sources[id] = source
         return id
 
     def lookup(self, name: str) -> Optional[MeasuredType]:
@@ -63,10 +91,31 @@ class TypeContext:
             return self.parent.lookup(name)
         return None
 
-    def bind(self, name: str, typ: MeasuredType):
+    def bind(self, name: str, typ: MeasuredType, mutable: bool = False):
+        """Declare `name` in this scope (shadowing any outer binding)."""
         self.bindings[name] = typ
+        if mutable:
+            self.immutable.discard(name)
+        else:
+            self.immutable.add(name)
 
-    def lookup_fn(self, name: str) -> Optional[FnDefStmt]:
+    def assign(self, name: str, typ: MeasuredType) -> Optional[str]:
+        """Update an existing variable in the scope that declared it.
+
+        Returns None on success, "undefined" if there is no such variable, or "immutable" if it
+        was declared with `let`.
+        """
+        scope = self
+        while scope is not None:
+            if name in scope.bindings:
+                if name in scope.immutable:
+                    return "immutable"
+                scope.bindings[name] = typ
+                return None
+            scope = scope.parent
+        return "undefined"
+
+    def lookup_fn(self, name: str) -> Optional[Closure]:
         if name in self.functions:
             return self.functions[name]
         if self.parent:
@@ -138,12 +187,19 @@ def _const_value(expr: Expr, ctx: "TypeContext", diags: list[Diagnostic], what: 
     diags.extend(d)
     return _as_const(t, expr.span, diags, what)
 
-def _is_approximate(t: MeasuredType) -> bool:
-    """True if `t` is an uncertain value whose distribution is not Normal."""
-    return is_scalar(t) and t.dist.family not in NORMAL_FAMILIES and t.dist.stddev > DET_TOL
+def _non_normal_families(t: MeasuredType, ctx: "TypeContext") -> set[str]:
+    """Families of the non-Normal readings an uncertain value depends on."""
+    if not is_scalar(t) or t.dist.stddev <= DET_TOL:
+        return set()
+    families = set()
+    for k in t.deps:
+        src = ctx.shared.sources.get(k)
+        if src is not None and src.kind == "read" and src.family != "Normal":
+            families.add(src.family)
+    return families
 
-def _approx_warning(span: Span, operands: list[MeasuredType], diags: list[Diagnostic], what: str):
-    families = sorted({t.dist.family for t in operands if _is_approximate(t)})
+def _approx_warning(span: Span, operands: list[MeasuredType], diags: list[Diagnostic], what: str, ctx: "TypeContext"):
+    families = sorted(set().union(*(_non_normal_families(t, ctx) for t in operands)))
     if families:
         diags.append(_diag("approximation-warning", span,
                            f"{what} assumes Normal inputs; the result for a {'/'.join(families)} input is a moment-matching approximation",
@@ -168,12 +224,13 @@ def _math_msg(e: Exception) -> str:
 
 MATH_ERRORS = (MathDomainError, OverflowError, ZeroDivisionError, ValueError)
 
-def create_measured(dist: Dist, affine: AffineForm, ctx: TypeContext) -> MeasuredType:
+def create_measured(dist: Dist, affine: AffineForm, ctx: TypeContext, linear: bool = False,
+                    source: NoiseSource = RESIDUAL) -> MeasuredType:
     """Pair a distribution with a dependency form whose variance matches it exactly.
 
     `affine` is the linear part of the result in terms of the independent noise sources. Any
-    variance not explained by it becomes a fresh, independent noise term; if the linear part
-    overstates the variance it is scaled down so that correlations stay consistent.
+    variance not explained by it becomes a fresh, independent noise term (described by `source`);
+    if the linear part overstates the variance it is scaled down so that correlations stay consistent.
     """
     var_exact = dist.stddev ** 2
     var_affine = get_var(affine)
@@ -182,17 +239,21 @@ def create_measured(dist: Dist, affine: AffineForm, ctx: TypeContext) -> Measure
         affine = scale_affine(affine, math.sqrt(var_exact / var_affine)) if var_exact > 0 else {}
     elif var_exact > var_affine + tol:
         affine = dict(affine)
-        affine[ctx.get_next_id()] = math.sqrt(var_exact - var_affine)
-    return MeasuredType(dist, affine)
+        affine[ctx.new_source(source)] = math.sqrt(var_exact - var_affine)
+    return MeasuredType(dist, affine, linear=linear or dist.stddev <= DET_TOL)
 
-def _fresh(dist: Dist, ctx: TypeContext) -> MeasuredType:
-    """A new source of uncertainty, independent of everything seen so far."""
-    return create_measured(dist, {}, ctx)
+def _read(family: str, params: list[float], ctx: TypeContext, values: Optional[list[float]] = None) -> MeasuredType:
+    """A new reading from a named distribution: a noise source independent of everything so far."""
+    dist = empirical(values) if family == "Empirical" else moments(family, params)
+    source = NoiseSource("read", family, tuple(params), tuple(values) if values is not None else None, dist)
+    return create_measured(dist, {}, ctx, linear=True, source=source)
 
 def _product(lt: MeasuredType, rt: MeasuredType, cov: float, ctx: TypeContext) -> MeasuredType:
     dist = product(lt.dist, rt.dist, cov)
     affine = linear_comb_affine(lt.deps, rt.dist.mean, rt.deps, lt.dist.mean)
-    return create_measured(dist, affine, ctx)
+    # scaling by a constant keeps a value linear in its noise sources; a true product does not
+    linear = (is_deterministic(lt) and rt.linear) or (is_deterministic(rt) and lt.linear)
+    return create_measured(dist, affine, ctx, linear=linear)
 
 def _dist_lit_params(lit: DistLit) -> tuple[str, list[Expr]]:
     return DIST_LIT_FAMILIES[type(lit)], [getattr(lit, f.name) for f in fields(lit)]
@@ -305,11 +366,11 @@ def _synth_binop(expr: BinOp, ctx: TypeContext) -> tuple[MeasuredType, list[Diag
             scale_r = 1.0 if op == "+" else -1.0
             affine = linear_comb_affine(lt.deps, 1.0, rt.deps, scale_r)
             dist = Dist(lt.dist.mean + scale_r * rt.dist.mean, math.sqrt(get_var(affine)))
-            return MeasuredType(dist, affine), diags
+            return MeasuredType(dist, affine, linear=lt.linear and rt.linear), diags
 
         if op == "*":
             if not (is_deterministic(lt) or is_deterministic(rt)):
-                _approx_warning(expr.span, [lt, rt], diags, "multiplication")
+                _approx_warning(expr.span, [lt, rt], diags, "multiplication", ctx)
             return _product(lt, rt, get_cov(lt.deps, rt.deps), ctx), diags
 
         if op == "/":
@@ -318,12 +379,13 @@ def _synth_binop(expr: BinOp, ctx: TypeContext) -> tuple[MeasuredType, list[Diag
                     raise MathDomainError("division by zero")
                 raise MathDomainError("cannot divide by a distribution with a zero mean")
             if not is_deterministic(rt):
-                _approx_warning(expr.span, [lt, rt], diags, "division")
+                _approx_warning(expr.span, [lt, rt], diags, "division", ctx)
                 _delta_warning(expr.span, rt, diags, "division by an uncertain value")
             mean = lt.dist.mean / rt.dist.mean
-            # Delta method
+            # Delta method (exact when dividing by a constant)
             affine = linear_comb_affine(lt.deps, 1.0 / rt.dist.mean, rt.deps, -lt.dist.mean / (rt.dist.mean**2))
-            return create_measured(Dist(mean, math.sqrt(get_var(affine))), affine, ctx), diags
+            linear = is_deterministic(rt) and lt.linear
+            return create_measured(Dist(mean, math.sqrt(get_var(affine))), affine, ctx, linear=linear), diags
     except MATH_ERRORS as e:
         diags.append(_diag("math-domain-error", expr.span, _math_msg(e)))
         return ERROR_TYPE, diags
@@ -371,7 +433,20 @@ def _synth_call(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, list[Diagno
     name = expr.name
     diags: list[Diagnostic] = []
 
-    if name in BUILTIN_ARITY:
+    if expr.target is not None:
+        # `module.function(...)`
+        target_t, diags = synth(expr.target, ctx)
+        if target_t is ERROR_TYPE:
+            return ERROR_TYPE, diags
+        if not isinstance(target_t.dist, dict):
+            diags.append(_diag("invalid-operand", expr.target.span, f"cannot call '{name}' on {_describe(target_t)}"))
+            return ERROR_TYPE, diags
+        closure = target_t.functions.get(name)
+        if closure is None:
+            available = ", ".join(sorted(target_t.functions)) or "none"
+            diags.append(_diag("unknown-function", expr.span, f"no function named '{name}' here (functions: {available})"))
+            return ERROR_TYPE, diags
+    elif name in BUILTIN_ARITY:
         arity = BUILTIN_ARITY[name]
         if len(expr.args) != arity:
             return ERROR_TYPE, [_diag("arity-mismatch", expr.span, f"{name}() takes {arity} positional argument(s), got {len(expr.args)}")]
@@ -383,20 +458,21 @@ def _synth_call(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, list[Diagno
         except MATH_ERRORS as e:
             return ERROR_TYPE, [_diag("math-domain-error", expr.span, _math_msg(e))]
 
-    fn_def = ctx.lookup_fn(name)
-    if fn_def is None:
-        candidates = difflib.get_close_matches(name, list(BUILTIN_ARITY) + sorted(ctx.all_fn_names()), n=1)
-        hint = f"; did you mean '{candidates[0]}'?" if candidates else ""
-        return ERROR_TYPE, [_diag("unknown-function", expr.span, f"no function named '{name}'{hint}")]
+    else:
+        closure = ctx.lookup_fn(name)
+        if closure is None:
+            candidates = difflib.get_close_matches(name, list(BUILTIN_ARITY) + sorted(ctx.all_fn_names()), n=1)
+            hint = f"; did you mean '{candidates[0]}'?" if candidates else ""
+            return ERROR_TYPE, [_diag("unknown-function", expr.span, f"no function named '{name}'{hint}")]
     if expr.kwargs:
-        return ERROR_TYPE, [_diag("arity-mismatch", expr.span, f"user-defined function '{name}' does not accept keyword arguments")]
+        return ERROR_TYPE, diags + [_diag("arity-mismatch", expr.span, f"user-defined function '{name}' does not accept keyword arguments")]
 
     arg_types = []
     for arg_expr in expr.args:
         t, d = synth(arg_expr, ctx)
         diags.extend(d)
         arg_types.append(t)
-    result, d = _call_function(fn_def, arg_types, expr.span, ctx)
+    result, d = _call_function(closure, arg_types, expr.span, ctx)
     diags.extend(d)
     return result, diags
 
@@ -414,7 +490,7 @@ def _synth_builtin(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, list[Dia
         dist_fn, slope_fn = UNARY_BUILTINS[name]
         result = dist_fn(at.dist)
         if not is_deterministic(at):
-            _approx_warning(expr.span, [at], diags, f"{name}()")
+            _approx_warning(expr.span, [at], diags, f"{name}()", ctx)
             if name in DELTA_METHOD_BUILTINS:
                 _delta_warning(expr.span, at, diags, f"{name}()")
         return create_measured(result, scale_affine(at.deps, slope_fn(at.dist, result)), ctx), diags
@@ -430,15 +506,15 @@ def _synth_builtin(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, list[Dia
         n = int(n_val)
         d = at.dist
         result = pow_const(d, n)
-        if not is_deterministic(at):
-            _approx_warning(expr.span, [at], diags, "pow()")
+        if not is_deterministic(at) and n not in (0, 1):
+            _approx_warning(expr.span, [at], diags, "pow()", ctx)
         if n in (0, 1):
             slope = float(n)
         elif n == 3:
             slope = 3.0 * (d.mean**2 + d.stddev**2)   # E[3X²]
         else:
             slope = n * (d.mean ** (n - 1))
-        return create_measured(result, scale_affine(at.deps, slope), ctx), diags
+        return create_measured(result, scale_affine(at.deps, slope), ctx, linear=(n == 1 and at.linear)), diags
 
     if name == "correlated":
         at, diags = synth(args[0], ctx)
@@ -458,27 +534,27 @@ def _synth_builtin(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, list[Dia
             diags.append(_diag("math-domain-error", expr.span,
                                f"cov={_fmt(cov)} is impossible: |cov| cannot exceed stddev(a) * stddev(b) = {_fmt(bound)}"))
             return ERROR_TYPE, diags
-        _approx_warning(expr.span, [at, bt], diags, "correlated()")
+        _approx_warning(expr.span, [at, bt], diags, "correlated()", ctx)
         return _product(at, bt, cov, ctx), diags
 
     if name == "sensor_read":
-        return _fresh(moments("Normal", [10.0, 1.0]), ctx), diags
+        return _read("Normal", [10.0, 1.0], ctx), diags
 
     if name == "uniform_read":
-        return _fresh(moments("Uniform", [0.0, 10.0]), ctx), diags
+        return _read("Uniform", [0.0, 10.0], ctx), diags
 
     if name in READ_BUILTINS:
         family = READ_BUILTINS[name]
         params = [_const_value(a, ctx, diags, f"{family} parameter '{p}'") for a, p in zip(args, FAMILY_PARAMS[family])]
         if any(p is None for p in params):
             return ERROR_TYPE, diags
-        return _fresh(moments(family, params), ctx), diags
+        return _read(family, params, ctx), diags
 
     if name == "empirical_read":
         values = _const_array(args[0], ctx, diags)
         if values is None:
             return ERROR_TYPE, diags
-        return _fresh(empirical(values), ctx), diags
+        return _read("Empirical", [], ctx, values), diags
 
     if name in ("map", "filter", "reduce"):
         return _synth_higher_order(expr, ctx)
@@ -514,34 +590,69 @@ def _synth_prob(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, list[Diagno
     if not (_require_scalar(lt, cmp.left.span, diags) and _require_scalar(rt, cmp.right.span, diags)):
         return ERROR_TYPE, diags
 
-    # Distribution of X - Y, including the covariance between them
+    # D = X - Y, including the covariance between them; prob(X op Y) = P(D op 0)
     mean = lt.dist.mean - rt.dist.mean
-    stddev = math.sqrt(get_var(linear_comb_affine(lt.deps, 1.0, rt.deps, -1.0)))
+    affine = linear_comb_affine(lt.deps, 1.0, rt.deps, -1.0)
+    stddev = math.sqrt(get_var(affine))
 
     if math.isclose(stddev, 0.0, abs_tol=DET_TOL):
         p = 1.0 if COMPARISONS[cmp.op](mean, 0.0) else 0.0
         return _const(p, "Exact"), diags
 
-    _approx_warning(expr.span, [lt, rt], diags, "prob()")
+    sources = [ctx.shared.sources.get(k) for k in affine]
+    exact_form = lt.linear and rt.linear and all(s is not None and s.kind == "read" for s in sources)
+
+    if exact_form and len(affine) == 1 and sources[0].family != "Normal":
+        # D depends on a single reading X = m + s·ε, so D = mean + (c/s)(X - m): use X's exact CDF.
+        (coeff,) = affine.values()
+        src = sources[0]
+        k = coeff / src.dist.stddev
+        threshold = src.dist.mean - mean / k
+        op = cmp.op if k > 0 else {"<": ">", ">": "<", "<=": ">=", ">=": "<="}[cmp.op]
+        p = probability(src.family, list(src.params), op, threshold, list(src.values) if src.values else None)
+        return _const(p, "Exact"), diags
+
+    if not (exact_form and all(s.family == "Normal" for s in sources)):
+        families = sorted({s.family for s in sources if s is not None and s.kind == "read" and s.family != "Normal"})
+        if families:
+            reason = f"it depends on non-Normal inputs ({'/'.join(families)})"
+        else:
+            reason = "it depends on the result of a nonlinear operation (such as a product, division or function)"
+        diags.append(_diag("approximation-warning", expr.span,
+                           f"prob() treats the difference of both sides as Normal, which is only an approximation here: {reason}",
+                           severity="warning"))
+
+    # Exact for a linear combination of Normal readings; a normal approximation otherwise
     cdf_0 = 0.5 * (1.0 + math.erf((0.0 - mean) / stddev / math.sqrt(2.0)))
     p = cdf_0 if cmp.op in ("<", "<=") else 1.0 - cdf_0
     return _const(p, "Exact"), diags
 
-def _resolve_fn_arg(expr: Expr, caller: str, ctx: TypeContext, diags: list[Diagnostic]) -> Optional[FnDefStmt]:
-    if not isinstance(expr, VarRef):
-        diags.append(_diag("invalid-operand", expr.span, f"the second argument of {caller}() must be the name of a function"))
-        return None
-    fn_def = ctx.lookup_fn(expr.name)
-    if fn_def is None:
-        diags.append(_diag("unknown-function", expr.span, f"no function named '{expr.name}' (functions passed to {caller}() must be defined with `fn`)"))
-    return fn_def
+def _resolve_fn_arg(expr: Expr, caller: str, ctx: TypeContext, diags: list[Diagnostic]) -> Optional[Closure]:
+    """Resolve a function passed by name (`f`) or from a module (`m.f`)."""
+    if isinstance(expr, VarRef):
+        closure = ctx.lookup_fn(expr.name)
+        if closure is None:
+            diags.append(_diag("unknown-function", expr.span, f"no function named '{expr.name}' (functions passed to {caller}() must be defined with `fn`)"))
+        return closure
+    if isinstance(expr, FieldAccess):
+        obj_t, d = synth(expr.obj, ctx)
+        diags.extend(d)
+        if obj_t is ERROR_TYPE:
+            return None
+        closure = obj_t.functions.get(expr.field) if isinstance(obj_t.dist, dict) else None
+        if closure is None:
+            diags.append(_diag("unknown-function", expr.span, f"no function named '{expr.field}' here"))
+        return closure
+    diags.append(_diag("invalid-operand", expr.span, f"the second argument of {caller}() must be the name of a function"))
+    return None
 
 def _synth_higher_order(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]:
     name = expr.name
     arr_t, diags = synth(expr.args[0], ctx)
-    fn_def = _resolve_fn_arg(expr.args[1], name, ctx, diags)
-    if arr_t is ERROR_TYPE or fn_def is None:
+    closure = _resolve_fn_arg(expr.args[1], name, ctx, diags)
+    if arr_t is ERROR_TYPE or closure is None:
         return ERROR_TYPE, diags
+    fn_def = closure.fn
     if not isinstance(arr_t.dist, tuple):
         diags.append(_diag("invalid-operand", expr.args[0].span, f"the first argument of {name}() must be an array, got {_describe(arr_t)}"))
         return ERROR_TYPE, diags
@@ -558,7 +669,7 @@ def _synth_higher_order(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, lis
         if acc_t is ERROR_TYPE:
             return ERROR_TYPE, diags
         for el in arr_t.dist:
-            acc_t, d = _call_function(fn_def, [acc_t, el], expr.span, ctx)
+            acc_t, d = _call_function(closure, [acc_t, el], expr.span, ctx)
             diags.extend(d)
             if acc_t is ERROR_TYPE:
                 return ERROR_TYPE, _dedupe(diags)
@@ -566,7 +677,7 @@ def _synth_higher_order(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, lis
 
     results = []
     for el in arr_t.dist:
-        r, d = _call_function(fn_def, [el], expr.span, ctx)
+        r, d = _call_function(closure, [el], expr.span, ctx)
         diags.extend(d)
         if r is ERROR_TYPE:
             return ERROR_TYPE, _dedupe(diags)
@@ -580,7 +691,8 @@ def _synth_higher_order(expr: Call, ctx: TypeContext) -> tuple[MeasuredType, lis
             results.append(el)
     return MeasuredType(tuple(results), {}), _dedupe(diags)
 
-def _call_function(fn_def: FnDefStmt, args: list[MeasuredType], span: Span, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]:
+def _call_function(closure: Closure, args: list[MeasuredType], span: Span, ctx: TypeContext) -> tuple[MeasuredType, list[Diagnostic]]:
+    fn_def, env = closure.fn, closure.env
     if len(args) != len(fn_def.args):
         return ERROR_TYPE, [_diag("arity-mismatch", span, f"function '{fn_def.name}' expects {len(fn_def.args)} argument(s), got {len(args)}")]
     if any(a is ERROR_TYPE for a in args):
@@ -592,11 +704,12 @@ def _call_function(fn_def: FnDefStmt, args: list[MeasuredType], span: Span, ctx:
                                   f"calls to '{fn_def.name}' nested more than {MAX_CALL_DEPTH} deep; recursion must stop after a bounded number of deterministic steps")]
 
     diags: list[Diagnostic] = []
-    call_ctx = TypeContext(parent=ctx)
+    # Lexical scoping: the body sees the scope the function was defined in, not the caller's
+    call_ctx = TypeContext(parent=env)
     for arg_def, arg_typ in zip(fn_def.args, args):
         if arg_def.type_ann is not None:
-            diags.extend(check_annotation(arg_typ, arg_def.type_ann, span, ctx, f"argument '{arg_def.name}' of '{fn_def.name}'"))
-        call_ctx.bind(arg_def.name, arg_typ)
+            diags.extend(check_annotation(arg_typ, arg_def.type_ann, span, env, f"argument '{arg_def.name}' of '{fn_def.name}'"))
+        call_ctx.bind(arg_def.name, arg_typ)   # parameters are immutable, like `let`
 
     shared.call_depth += 1
     try:
@@ -610,7 +723,7 @@ def _call_function(fn_def: FnDefStmt, args: list[MeasuredType], span: Span, ctx:
         shared.call_depth -= 1
 
     if fn_def.return_type is not None and result is not ERROR_TYPE:
-        diags.extend(check_annotation(result, fn_def.return_type, span, ctx, f"the return value of '{fn_def.name}'"))
+        diags.extend(check_annotation(result, fn_def.return_type, span, env, f"the return value of '{fn_def.name}'"))
     return result, diags
 
 def check_annotation(inferred: MeasuredType, type_ann: DistLit, span: Span, ctx: TypeContext, subject: str = "the value") -> list[Diagnostic]:
@@ -691,7 +804,10 @@ def _check_loop(stmt: WhileStmt | ForStmt, ctx: TypeContext, out: list[Diagnosti
                 break
             local.extend(_check_block(stmt.body.stmts, ctx))
             if step is not None:
-                local.extend(check_stmt(step, ctx))
+                step_diags = check_stmt(step, ctx)
+                local.extend(step_diags)
+                if any(d.severity == "error" for d in step_diags):
+                    break   # the loop cannot advance; don't pile a loop-limit error on top
             iters += 1
     finally:
         out.extend(_dedupe(local))
@@ -702,15 +818,18 @@ def _check_stmt(stmt: Stmt, ctx: TypeContext, out: list[Diagnostic]):
         out.extend(d)
         if stmt.type_ann is not None:
             out.extend(check_annotation(inferred, stmt.type_ann, stmt.span, ctx, f"`{stmt.name}`"))
-        ctx.bind(stmt.name, inferred)
+        ctx.bind(stmt.name, inferred, mutable=isinstance(stmt, VarStmt))
 
     elif isinstance(stmt, AssignStmt):
         inferred, d = synth(stmt.value, ctx)
         out.extend(d)
-        if ctx.lookup(stmt.name) is None:
+        status = ctx.assign(stmt.name, inferred)
+        if status == "undefined":
             out.append(_diag("undefined-var", stmt.span, name=stmt.name))
-            return
-        ctx.bind(stmt.name, inferred)
+        elif status == "immutable":
+            out.append(_diag("immutable-assign", stmt.span,
+                             f"cannot assign twice to `{stmt.name}`: it was declared with `let` (or is a function parameter or module); "
+                             f"declare it with `var {stmt.name} = ...` to allow reassignment"))
 
     elif isinstance(stmt, WhileStmt):
         _check_loop(stmt, ctx, out, step=None)
@@ -728,7 +847,7 @@ def _check_stmt(stmt: Stmt, ctx: TypeContext, out: list[Diagnostic]):
             out.extend(_check_block(body.stmts, ctx))
 
     elif isinstance(stmt, FnDefStmt):
-        ctx.functions[stmt.name] = stmt
+        ctx.functions[stmt.name] = Closure(stmt, ctx)
 
     elif isinstance(stmt, ReturnStmt):
         typ, d = synth(stmt.value, ctx)
@@ -776,8 +895,8 @@ def _check_import(stmt: ImportStmt, ctx: TypeContext, out: list[Diagnostic]):
         out.append(_diag("import-error", stmt.span,
                          f"module '{module}' has {len(errors)} error(s); first at {filepath}:{first.span.line}:{first.span.col}: {diagnostic_message(first)}"))
 
-    # Expose the module's top-level bindings as a struct
-    ctx.bind(stmt.alias, MeasuredType(dict(mod_ctx.bindings), {}))
+    # Expose the module's top-level values as a struct, and its functions as `alias.fn(...)`
+    ctx.bind(stmt.alias, MeasuredType(dict(mod_ctx.bindings), {}, functions=dict(mod_ctx.functions)))
 
 # --- programs -------------------------------------------------------------------
 
